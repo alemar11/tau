@@ -1,0 +1,19 @@
+{
+  "name": "tau",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monorepo for personal Pi packages",
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.99.1",
+    "typescript": "^5.9.3"
+  }
+}
