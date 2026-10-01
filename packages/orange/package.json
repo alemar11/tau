@@ -1,0 +1,21 @@
+{
+  "name": "tau-orange",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Orange accents and a cost-free stock footer for Pi",
+  "type": "module",
+  "keywords": ["pi-package", "pi-theme", "pi-extension"],
+  "engines": { "node": ">=22.19.0" },
+  "files": ["extensions/", "themes/", "README.md"],
+  "pi": {
+    "extensions": ["./extensions/orange.ts"],
+    "themes": ["./themes/tau-orange.json"]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
