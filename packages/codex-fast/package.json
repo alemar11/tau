@@ -1,0 +1,22 @@
+{
+  "name": "tau-codex-fast",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fast and ultrafast commands for supported OpenAI models in Pi",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension", "codex"],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": ["extensions/", "README.md"],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
