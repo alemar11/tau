@@ -28,9 +28,7 @@ export default function codexFast(pi: ExtensionAPI) {
 
   function updateStatus(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
-    ctx.ui.setStatus(STATUS_KEY, mode === "off"
-      ? undefined
-      : `Codex ${mode}: ${supportsMode(ctx, mode) ? "active" : "inactive"}`);
+    ctx.ui.setStatus(STATUS_KEY, supportsMode(ctx, mode) ? mode : undefined);
   }
 
   function restore(ctx: ExtensionContext) {

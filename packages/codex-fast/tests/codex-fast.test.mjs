@@ -44,7 +44,7 @@ test("fast defaults to off and toggles priority without mutating the request", a
   await app.command();
   assert.deepEqual(app.request(payload), { ...payload, service_tier: "priority" });
   assert.equal(payload.service_tier, undefined);
-  assert.equal(app.status(), "Codex fast: active");
+  assert.equal(app.status(), "fast");
   await app.command();
   assert.equal(app.request(payload), undefined);
   assert.equal(app.status(), undefined);
@@ -83,7 +83,7 @@ test("ultrafast toggles its own tier only on supported provider/model pairs", as
     const app = setup({ model });
     await app.command("", "codex-ultrafast");
     assert.deepEqual(app.request(payload), { ...payload, service_tier: "ultrafast" });
-    assert.equal(app.status(), "Codex ultrafast: active");
+    assert.equal(app.status(), "ultrafast");
     await app.command("", "codex-ultrafast");
     assert.equal(app.request(payload), undefined);
     assert.equal(app.status(), undefined);
@@ -128,22 +128,22 @@ test("unsupported models, providers and APIs never enable or modify speed tiers"
     app.entries.push(stateEntry("fast"));
     app.emit("session_start");
     assert.equal(app.request(payload), undefined);
-    assert.equal(app.status(), "Codex fast: inactive");
+    assert.equal(app.status(), undefined);
   }
 });
 
-test("switching models updates active/inactive state without losing the selected mode", async () => {
+test("switching models hides and restores the compact label without losing the selected mode", async () => {
   const app = setup({ model: openai });
   await app.command("on", "codex-ultrafast");
   app.select(codex);
-  assert.equal(app.status(), "Codex ultrafast: inactive");
+  assert.equal(app.status(), undefined);
   assert.equal(app.request(payload), undefined);
   await app.command("status");
   assert.match(app.notifications.at(-1).message, /ultrafast \(inactive/);
   await app.command("on", "codex-ultrafast");
   assert.equal(app.entries.length, 1);
   app.select(openai);
-  assert.equal(app.status(), "Codex ultrafast: active");
+  assert.equal(app.status(), "ultrafast");
   assert.equal(app.request(payload).service_tier, "ultrafast");
   app.select(undefined);
   await app.command("", "codex-ultrafast");
@@ -165,7 +165,7 @@ test("reload/resume restores each mode from the active branch", async () => {
     const app = setup({ model: openai, entries: [stateEntry("fast"), stateEntry(mode)] });
     assert.equal(app.request(payload)?.service_tier,
       mode === "off" ? undefined : mode === "fast" ? "priority" : "ultrafast");
-    assert.equal(app.status(), mode === "off" ? undefined : `Codex ${mode}: active`);
+    assert.equal(app.status(), mode === "off" ? undefined : mode);
     app.entries.length = 0;
     app.emit("session_start");
     assert.equal(app.request(payload), undefined);
@@ -188,7 +188,7 @@ test("tree navigation restores branch state and ignores unrelated or malformed e
   app.entries.splice(0, app.entries.length, stateEntry("fast"));
   app.emit("session_tree");
   assert.equal(app.request(payload).service_tier, "priority");
-  assert.equal(app.status(), "Codex fast: active");
+  assert.equal(app.status(), "fast");
   app.entries.length = 0;
   app.emit("session_tree");
   assert.equal(app.request(payload), undefined);
