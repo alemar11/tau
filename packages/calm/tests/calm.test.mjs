@@ -14,6 +14,7 @@ function setup(t, { mode = "tui", entries = [] } = {}) {
   const events = new Map();
   const notifications = [];
   const uiCalls = [];
+  const statuses = new Map();
   let command;
   let widget;
   let draws = 0;
@@ -33,6 +34,11 @@ function setup(t, { mode = "tui", entries = [] } = {}) {
         style: (text, { fg, bg }) => `${color}:${fg}/${bg}:${text}`,
       },
       notify: (message, level) => notifications.push({ message, level }),
+      setStatus: (key, text) => {
+        uiCalls.push(["status", key, text]);
+        if (text === undefined) statuses.delete(key);
+        else statuses.set(key, text);
+      },
       setHiddenThinkingLabel: (label) => uiCalls.push(["thinking", label]),
       setWorkingVisible: (visible) => uiCalls.push(["working", visible]),
       setWidget: (key, factory) => {
@@ -58,7 +64,7 @@ function setup(t, { mode = "tui", entries = [] } = {}) {
   t.after(() => emit("session_shutdown"));
   emit("session_start");
   return {
-    events, notifications, uiCalls, entries, emit,
+    events, notifications, uiCalls, entries, emit, statuses,
     command: (args = "") => command(args, ctx),
     widget: () => widget,
     draws: () => draws,
@@ -95,6 +101,30 @@ test("toggle and explicit commands save only changed choices in the session bran
   await app.command("toggle");
   assert.deepEqual(app.entries, [stateEntry(true), stateEntry(false)]);
   assert.deepEqual(app.uiCalls.slice(-2), [["thinking", undefined], ["working", true]]);
+});
+
+test("the extension bar label follows Calm state across runs, branches, and shutdown", async (t) => {
+  const app = setup(t);
+  app.statuses.set("another-extension", "other");
+  assert.equal(app.statuses.has("tau:calm"), false);
+  await app.command("on");
+  assert.equal(app.statuses.get("tau:calm"), "calm");
+  app.emit("agent_start");
+  app.emit("agent_settled");
+  assert.equal(app.statuses.get("tau:calm"), "calm");
+  await app.command("off");
+  assert.equal(app.statuses.has("tau:calm"), false);
+  app.entries.splice(0, app.entries.length, stateEntry(true));
+  app.emit("session_tree");
+  assert.equal(app.statuses.get("tau:calm"), "calm");
+  app.emit("session_shutdown");
+  assert.equal(app.statuses.has("tau:calm"), false);
+  app.emit("session_start");
+  assert.equal(app.statuses.get("tau:calm"), "calm");
+  app.entries.length = 0;
+  app.emit("session_start");
+  assert.equal(app.statuses.has("tau:calm"), false);
+  assert.equal(app.statuses.get("another-extension"), "other");
 });
 
 test("reload and resume restore the branch's last valid choice; a fresh session starts off", async (t) => {
