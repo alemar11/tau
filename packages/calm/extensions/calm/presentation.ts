@@ -1,4 +1,6 @@
-import { AssistantMessageComponent, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import { stripVTControlCharacters } from "node:util";
+import { AssistantMessageComponent, ToolExecutionComponent, type Theme } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 
 type AssistantMessage = Parameters<AssistantMessageComponent["updateContent"]>[0];
 type AssistantLayout = {
@@ -10,7 +12,11 @@ type AssistantLayout = {
 type ToolLayout = {
   toolName: string;
   expanded: boolean;
-  result?: { isError?: boolean; content: { type: string }[] };
+  result?: {
+    isError?: boolean;
+    content: { type: string; text?: string }[];
+    structuredContent?: unknown;
+  };
 };
 
 const QUIET_TOOLS = new Set(["bash", "powershell", "read", "edit", "write", "grep", "find", "ls"]);
@@ -40,12 +46,39 @@ function toolLayout(component: ToolExecutionComponent): ToolLayout | undefined {
   return layout;
 }
 
+function errorSummary(layout: ToolLayout): string {
+  const output = layout.result?.content
+    .filter((block) => block.type === "text" && typeof block.text === "string")
+    .map((block) => stripVTControlCharacters(block.text!)).join("\n") ?? "";
+  const lines = output.split(/[\r\n]+/)
+    .map((line) => line.replace(/[\x00-\x1f\x7f-\x9f]/g, " ").trim()).filter(Boolean);
+  let detail = lines[0] || "failed";
+  if (layout.toolName === "bash" || layout.toolName === "powershell") {
+    const data = layout.result?.structuredContent;
+    if (typeof data === "object" && data !== null && "exit_code" in data &&
+      typeof data.exit_code === "number" && Number.isInteger(data.exit_code) && data.exit_code !== 0) {
+      detail = `exited with code ${data.exit_code}`;
+    } else {
+      // Pi's shell tools append a final status for thrown errors and older results.
+      const status = lines.at(-1);
+      if (status && /^Command (?:exited with code -?\d+|aborted|timed out after .+ seconds|terminated without an exit code)$/.test(status)) {
+        detail = status.replace(/^Command /, "");
+      }
+    }
+  }
+  return `✗ ${layout.toolName} — ${detail}`;
+}
+
 /**
  * Pi has no transcript-wide presentation filter. These adapters touch rendering only;
  * private layout fields are capability-checked and an unavailable adapter fails open.
  * No tool registrations, messages, model context, or serialized entries are changed.
  */
-export function installPresentation(isEnabled: () => boolean, warn: (message: string) => void): () => void {
+export function installPresentation(
+  isEnabled: () => boolean,
+  warn: (message: string) => void,
+  getTheme: () => Pick<Theme, "fg">,
+): () => void {
   const assistant = AssistantMessageComponent.prototype;
   const tool = ToolExecutionComponent.prototype;
   const originalUpdate = assistant.updateContent;
@@ -106,8 +139,11 @@ export function installPresentation(isEnabled: () => boolean, warn: (message: st
     if (active() && toolAvailable) {
       const layout = toolLayout(this);
       if (!layout) unavailable("tool");
-      else if (QUIET_TOOLS.has(layout.toolName) && !layout.expanded && !layout.result?.isError &&
-        !layout.result?.content.some((block) => block.type === "image")) return [];
+      else if (QUIET_TOOLS.has(layout.toolName) && !layout.expanded &&
+        !layout.result?.content.some((block) => block.type === "image")) {
+        if (!layout.result?.isError || width < 1) return [];
+        return [getTheme().fg("error", truncateToWidth(errorSummary(layout), width, "…"))];
+      }
     }
     return originalToolRender.call(this, width);
   }

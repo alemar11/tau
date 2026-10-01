@@ -57,7 +57,11 @@ export default function calm(pi: ExtensionAPI) {
   function apply(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
     if (enabled) {
-      removePresentation ??= installPresentation(() => enabled, (message) => ctx.ui.notify(message, "warning"));
+      removePresentation ??= installPresentation(
+        () => enabled,
+        (message) => ctx.ui.notify(message, "warning"),
+        () => ctx.ui.theme,
+      );
       ctx.ui.setHiddenThinkingLabel("");
       ctx.ui.setWorkingVisible(false);
       uiApplied = true;

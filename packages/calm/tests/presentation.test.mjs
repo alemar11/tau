@@ -6,6 +6,7 @@ import { test } from "node:test";
 import {
   AssistantMessageComponent, ToolExecutionComponent, createReadToolDefinition, initTheme,
 } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { installPresentation } from "../extensions/calm/presentation.ts";
 
 initTheme();
@@ -20,9 +21,15 @@ const message = (content, stopReason = "stop", extra = {}) => ({
 function setup(t) {
   let enabled = true;
   const warnings = [];
-  const remove = installPresentation(() => enabled, (warning) => warnings.push(warning));
+  let color = "\x1b[31m";
+  const remove = installPresentation(() => enabled, (warning) => warnings.push(warning), () => ({
+    fg: (token, value) => {
+      assert.equal(token, "error");
+      return `${color}${value}\x1b[39m`;
+    },
+  }));
   t.after(remove);
-  return { warnings, remove, toggle: (next) => { enabled = next; } };
+  return { warnings, remove, toggle: (next) => { enabled = next; }, color: (next) => { color = next; } };
 }
 
 function row(name = "read", definition = name === "read" ? createReadToolDefinition(process.cwd()) : undefined) {
@@ -41,9 +48,77 @@ test("routine built-in tool rows hide, errors remain visible, and expanded rows 
     assert.match(plain(component.render(60)), /result/);
     component.setExpanded(false);
     component.updateResult({ content: [text("permission denied")], isError: true });
-    assert.match(plain(component.render(60)), /permission denied/);
+    const lines = component.render(60);
+    assert.equal(lines.length, 1);
+    assert.equal(plain(lines), `✗ ${name} — permission denied`);
+    assert.equal(lines[0], `\x1b[31m✗ ${name} — permission denied\x1b[39m`);
   }
   assert.deepEqual(app.warnings, []);
+});
+
+test("shell failures summarize exit status or timeout instead of log output", (t) => {
+  setup(t);
+  for (const name of ["bash", "powershell"]) {
+    const component = row(name);
+    component.updateResult({
+      content: [text("Lots of output\nassertion details\nCommand exited with code 1")],
+      structuredContent: { exit_code: 2 }, isError: true,
+    });
+    assert.equal(plain(component.render(80)), `✗ ${name} — exited with code 2`);
+    component.updateResult({
+      content: [text("Earlier logs\nCommand exited with code 1")], isError: true,
+    });
+    assert.equal(plain(component.render(80)), `✗ ${name} — exited with code 1`);
+    for (const status of ["timed out after 30 seconds", "aborted", "terminated without an exit code"]) {
+      component.updateResult({ content: [text(`Earlier logs\nCommand ${status}`)], isError: true });
+      assert.equal(plain(component.render(80)), `✗ ${name} — ${status}`);
+    }
+  }
+});
+
+test("expanded errors, Calm off, and cleanup restore full native output without mutating results", (t) => {
+  const component = row("bash");
+  const result = Object.freeze({
+    content: Object.freeze([Object.freeze(text("First error\nFull diagnostic details\nCommand exited with code 1"))]),
+    isError: true,
+  });
+  component.updateResult(result);
+  const stock = component.render(80);
+  component.setExpanded(true);
+  const expanded = component.render(80);
+  component.setExpanded(false);
+  const app = setup(t);
+  assert.equal(plain(component.render(80)), "✗ bash — exited with code 1");
+  component.setExpanded(true);
+  assert.deepEqual(component.render(80), expanded);
+  assert.match(plain(component.render(80)), /Full diagnostic details/);
+  component.setExpanded(false);
+  assert.equal(component.render(80).length, 1);
+  app.toggle(false);
+  assert.deepEqual(component.render(80), stock);
+  app.toggle(true);
+  app.remove();
+  assert.deepEqual(component.render(80), stock);
+  assert.equal(result.content[0].text, "First error\nFull diagnostic details\nCommand exited with code 1");
+});
+
+test("error summaries sanitize controls, fit narrow Unicode widths, and use the current theme", (t) => {
+  const app = setup(t);
+  const component = row();
+  component.updateResult({ content: [text("\n\x1b[41m病🙂é\tpermission denied\x1b[0m\x07\nFull details")], isError: true });
+  assert.equal(plain(component.render(80)), "✗ read — 病🙂é permission denied");
+  assert.doesNotMatch(component.render(80)[0], /\x1b\[41m|\x07/);
+  for (const width of [1, 2, 5, 10, 15, 30, 80]) {
+    const lines = component.render(width);
+    assert.equal(lines.length, 1);
+    assert.ok(visibleWidth(lines[0]) <= width);
+    assert.doesNotMatch(lines[0], /[\n\r\t]/);
+  }
+  assert.deepEqual(component.render(0), []);
+  app.color("\x1b[91m");
+  assert.ok(component.render(80)[0].startsWith("\x1b[91m"));
+  component.updateResult({ content: [], isError: true });
+  assert.equal(plain(component.render(80)), "✗ read — failed");
 });
 
 test("custom tools and image-bearing results keep their normal rows", (t) => {
@@ -51,9 +126,15 @@ test("custom tools and image-bearing results keep their normal rows", (t) => {
   const custom = row("custom-tool");
   custom.updateResult({ content: [text("custom result")] });
   assert.match(plain(custom.render(60)), /custom result/);
+  custom.updateResult({ content: [text("custom error\ncustom details")], isError: true });
+  assert.match(plain(custom.render(60)), /custom details/);
+  assert.ok(custom.render(60).length > 1);
   const image = row();
   image.updateResult({ content: [text("Read image file"), { type: "image", data: "", mimeType: "image/png" }] });
   assert.ok(image.render(60).length > 0);
+  image.updateResult({ content: [text("image error"), { type: "image", data: "", mimeType: "image/png" }], isError: true });
+  assert.match(plain(image.render(60)), /image error/);
+  assert.ok(image.render(60).length > 1);
 });
 
 test("toggling off restores existing tool rows byte-for-byte without new registrations", (t) => {
