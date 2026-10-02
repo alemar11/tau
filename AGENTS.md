@@ -1,7 +1,7 @@
 # Repository instructions
 
 - Keep this file focused on instructions for maintaining this repository; exclude personal details.
-- Treat the npm-workspaces root as tooling only; install individual packages, not the root.
+- Keep the npm-workspaces root installable as the full Pi bundle, with an explicit `pi` manifest listing package entry points and themes. Update that manifest when adding or removing bundled resources; keep individual packages independently installable.
 - Keep each independently installable package in `packages/<name>/`, with its own `package.json`, version, Pi resource manifest, and README.
 - Keep extension entry points in the owning package's `extensions/`: one `.ts` file for a small extension, or a directory with `index.ts` for a multi-file extension.
 - When implementing Pi extensions, verify APIs against the installed Pi documentation and examples. Target Pi 0.99.1 and import from `@earendil-works/pi-coding-agent`.

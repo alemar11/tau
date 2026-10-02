@@ -2,15 +2,27 @@
   "name": "tau",
   "version": "0.1.0",
   "private": true,
-  "description": "Monorepo for personal Pi packages",
+  "description": "Bundle of personal Pi packages with shared workspace tooling",
   "type": "module",
   "workspaces": ["packages/*"],
+  "pi": {
+    "extensions": [
+      "./packages/codex-fast/extensions/codex-fast.ts",
+      "./packages/calm/extensions/calm/index.ts",
+      "./packages/orange/extensions/orange.ts"
+    ],
+    "themes": ["./packages/orange/themes/tau-orange.json"]
+  },
   "engines": {
     "node": ">=22.19.0"
   },
   "scripts": {
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.99.1",

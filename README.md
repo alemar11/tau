@@ -1,6 +1,6 @@
 # tau
 
-An npm-workspaces monorepo for personal [Pi](https://pi.dev) packages. Each directory under `packages/` is an independently installable package with its own manifest, version, and resources. The repository root is tooling only, not a Pi package.
+An npm-workspaces monorepo for personal [Pi](https://pi.dev) packages. Each directory under `packages/` is an independently installable package with its own manifest, version, and resources. The repository root is also an installable bundle containing all packages, alongside shared development tooling.
 
 Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by default to avoid accidental npm publication.
 
@@ -11,6 +11,32 @@ Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by de
 | [codex-fast](packages/codex-fast/README.md) (`tau-codex-fast`) | Fast and ultrafast commands for supported OpenAI models |
 | [calm](packages/calm/README.md) (`calm`) | Quiet transcript presentation with an animated pixel alien |
 | [orange](packages/orange/README.md) (`tau-orange`) | Orange-accent dark theme and stock footer without estimated cost |
+
+## Install the whole bundle
+
+Once these changes are on GitHub:
+
+```sh
+pi install git:github.com/alemar11/tau
+```
+
+Or install from a local checkout:
+
+```sh
+pi install /path/to/tau
+```
+
+Restart Pi or run `/reload`. This loads codex-fast, Calm, and Orange's footer extension, and makes the **tau-orange** theme available under `/settings` → Theme. Calm and Codex speed modes remain off until enabled with their commands.
+
+To try the bundle for one session from the repository root:
+
+```sh
+pi -e .
+```
+
+Use `pi config` to disable individual bundled resources. Update the GitHub installation with `pi update git:github.com/alemar11/tau`.
+
+Install either the bundle or individual packages, not both: overlapping installations can load the same extensions and theme twice. If switching from individual packages, remove their registrations with `pi remove <source>` before installing the bundle.
 
 ## Install a package
 
@@ -28,18 +54,7 @@ To try it without changing Pi settings, from the repository root:
 pi -e ./packages/codex-fast
 ```
 
-Install each package you want separately. Installing the repository root does not install its workspace packages.
-
-### Migrating an earlier root installation
-
-If you previously installed the repository root, replace that registration:
-
-```sh
-pi remove /path/to/tau
-pi install /path/to/tau/packages/codex-fast
-```
-
-These commands change personal Pi settings. The repository restructuring itself does not change your Pi settings.
+Install individual packages when you do not want the full bundle. To switch from the bundle to individual packages, remove the bundle registration with `pi remove <source>`, then install the package directories you want.
 
 ## Develop
 
@@ -64,13 +79,15 @@ Create `packages/<name>/package.json` with a unique npm package name, its own ve
 
 Keep runtime dependencies in the owning package. Host-provided Pi packages belong in its `peerDependencies` with a `"*"` range. Shared development tooling lives at the root; TypeScript packages can extend `tsconfig.base.json`.
 
+Add the package's extension entry points and any themes, skills, or prompts to the root `pi` manifest so the bundle includes them. List entry points explicitly, not helper modules or tests.
+
 Run `npm install --ignore-scripts` at the root after adding a workspace or changing dependencies. Add package-local check/test scripts when applicable, and keep tests outside extension discovery paths.
 
 ## Layout
 
 ```text
 tau/
-├── package.json              # workspace configuration and shared tooling
+├── package.json              # bundle manifest, workspaces, and shared tooling
 ├── package-lock.json         # shared dependency lockfile
 ├── tsconfig.base.json        # shared TypeScript options
 ├── AGENTS.md
