@@ -5,11 +5,13 @@
   "description": "Bundle of personal Pi packages with shared workspace tooling",
   "type": "module",
   "workspaces": ["packages/*"],
+  "files": ["packages/", "README.md", "tsconfig.base.json"],
   "pi": {
     "extensions": [
       "./packages/codex-fast/extensions/codex-fast.ts",
       "./packages/calm/extensions/calm/index.ts",
-      "./packages/orange/extensions/orange.ts"
+      "./packages/orange/extensions/orange.ts",
+      "./packages/web/extensions/web/index.ts"
     ],
     "themes": ["./packages/orange/themes/tau-orange.json"]
   },
@@ -27,6 +29,7 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@earendil-works/pi-tui": "0.99.1",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "typebox": "1.3.27"
   }
 }

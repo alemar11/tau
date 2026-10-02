@@ -1,0 +1,21 @@
+{
+  "name": "web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Web search, page and PDF reading, and branch-scoped caching for Pi",
+  "type": "module",
+  "keywords": ["pi-package", "pi-extension"],
+  "engines": { "node": ">=22.19.0" },
+  "files": ["extensions/", "README.md"],
+  "pi": { "extensions": ["./extensions/web/index.ts"] },
+  "scripts": { "check": "tsc --noEmit", "test": "node --test tests/*.test.mjs" },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*", "typebox": "*" },
+  "dependencies": {
+    "@mozilla/readability": "^0.6.0",
+    "ipaddr.js": "^2.2.0",
+    "linkedom": "^0.18.12",
+    "turndown": "^7.2.0",
+    "undici": "^7.16.0",
+    "unpdf": "^1.4.0"
+  }
+}
