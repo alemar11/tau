@@ -4,7 +4,6 @@ import { installPresentation } from "./presentation.ts";
 
 const STATE_ENTRY = "tau:calm";
 const WIDGET_KEY = "tau:calm";
-const STATUS_KEY = "tau:calm";
 const INTERVAL_MS = 240;
 
 function monsterColorForThinkingLevel(level: ExtensionContext["thinkingLevel"]): ThemeColor {
@@ -83,12 +82,10 @@ export default function calm(pi: ExtensionAPI) {
       );
       ctx.ui.setHiddenThinkingLabel("");
       ctx.ui.setWorkingVisible(false);
-      ctx.ui.setStatus(STATUS_KEY, "calm");
       uiApplied = true;
       if (running) startAnimation(ctx);
       else clearAnimation(ctx);
     } else if (uiApplied) {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
       clearAnimation(ctx);
       ctx.ui.setHiddenThinkingLabel();
       ctx.ui.setWorkingVisible(true);

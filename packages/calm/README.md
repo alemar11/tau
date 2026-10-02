@@ -48,7 +48,7 @@ While enabled:
    ▄█     █▄
 ```
 
-User messages are never filtered. `Ctrl+O` still reveals expanded tools; `Ctrl+T` toggles reasoning visibility. `/calm off` restores hidden working notes too. Nothing is removed from model context, session storage, or exports. No tool implementations, tool registrations, provider requests, or prompts are changed. A `calm` label appears in the extension status bar while enabled and disappears when disabled.
+User messages are never filtered. `Ctrl+O` still reveals expanded tools; `Ctrl+T` toggles reasoning visibility. `/calm off` restores hidden working notes too. Nothing is removed from model context, session storage, or exports. No tool implementations, tool registrations, provider requests, or prompts are changed. Calm does not add an extension status bar label.
 
 ## Compatibility
 

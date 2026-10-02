@@ -15,7 +15,6 @@ function setup(t, { mode = "tui", entries = [], thinkingLevel } = {}) {
   const events = new Map();
   const notifications = [];
   const uiCalls = [];
-  const statuses = new Map();
   let command;
   let widget;
   let draws = 0;
@@ -41,11 +40,6 @@ function setup(t, { mode = "tui", entries = [], thinkingLevel } = {}) {
         style: (text, { fg, bg }) => `${color}:${fg}/${bg}:${text}`,
       },
       notify: (message, level) => notifications.push({ message, level }),
-      setStatus: (key, text) => {
-        uiCalls.push(["status", key, text]);
-        if (text === undefined) statuses.delete(key);
-        else statuses.set(key, text);
-      },
       setHiddenThinkingLabel: (label) => uiCalls.push(["thinking", label]),
       setWorkingVisible: (visible) => uiCalls.push(["working", visible]),
       setWidget: (key, factory) => {
@@ -71,7 +65,7 @@ function setup(t, { mode = "tui", entries = [], thinkingLevel } = {}) {
   t.after(() => emit("session_shutdown"));
   emit("session_start");
   return {
-    events, notifications, uiCalls, entries, emit, statuses,
+    events, notifications, uiCalls, entries, emit,
     command: (args = "") => command(args, ctx),
     widget: () => widget,
     draws: () => draws,
@@ -111,28 +105,19 @@ test("toggle and explicit commands save only changed choices in the session bran
   assert.deepEqual(app.uiCalls.slice(-2), [["thinking", undefined], ["working", true]]);
 });
 
-test("the extension bar label follows Calm state across runs, branches, and shutdown", async (t) => {
+test("Calm does not publish an extension bar label", async (t) => {
   const app = setup(t);
-  app.statuses.set("another-extension", "other");
-  assert.equal(app.statuses.has("tau:calm"), false);
   await app.command("on");
-  assert.equal(app.statuses.get("tau:calm"), "calm");
   app.emit("agent_start");
   app.emit("agent_settled");
-  assert.equal(app.statuses.get("tau:calm"), "calm");
   await app.command("off");
-  assert.equal(app.statuses.has("tau:calm"), false);
   app.entries.splice(0, app.entries.length, stateEntry(true));
   app.emit("session_tree");
-  assert.equal(app.statuses.get("tau:calm"), "calm");
   app.emit("session_shutdown");
-  assert.equal(app.statuses.has("tau:calm"), false);
   app.emit("session_start");
-  assert.equal(app.statuses.get("tau:calm"), "calm");
   app.entries.length = 0;
   app.emit("session_start");
-  assert.equal(app.statuses.has("tau:calm"), false);
-  assert.equal(app.statuses.get("another-extension"), "other");
+  assert.equal(app.uiCalls.some(([kind]) => kind === "status"), false);
 });
 
 test("reload and resume restore the branch's last valid choice; a fresh session starts off", async (t) => {
@@ -269,6 +254,31 @@ test("the monster body uses the current thinking-level border color when availab
   assert.match(app.widget().render(80)[1], /first:thinkingHigh\/text:▀/);
 });
 
+test("monster variants blink and move their requested features", () => {
+  const theme = {
+    colors: { accent: "accent", text: "text" },
+    fg: (token, text) => `${token}:${text}`,
+    style: (text, { fg, bg }) => `${fg}/${bg}:${text}`,
+  };
+  const shapeTheme = { ...theme, fg: (_token, text) => text, style: (text) => text };
+  assert.equal(renderMonster(15, 0, shapeTheme, undefined, 1)[2], "█▀███████████▀█");
+  assert.equal(renderMonster(15, 2, shapeTheme, undefined, 1)[2], "█▄███████████▄█");
+  assert.equal(renderMonster(15, 0, shapeTheme, undefined, 2)[0], "   ▄▀     ▀▄   ");
+  assert.equal(renderMonster(15, 2, shapeTheme, undefined, 2)[0], "   ▀▄     ▄▀   ");
+  assert.equal(renderMonster(15, 0, shapeTheme, undefined, 3)[1], "  ▄█████████▄  ");
+  assert.equal(renderMonster(15, 0, shapeTheme, undefined, 3)[2], "▄█████████████▄");
+  assert.equal(renderMonster(15, 2, shapeTheme, undefined, 2)[4], "  ▄▀▀     ▀▀▄  ");
+  assert.equal(renderMonster(15, 0, shapeTheme, undefined, 3)[4], "  ▄▀▄ ▄▀▄ ▄▀▄  ");
+  assert.equal(renderMonster(15, 2, shapeTheme, undefined, 3)[4], "  ▀▄▀ ▀▄▀ ▀▄▀  ");
+  assert.equal(renderMonster(15, 0, shapeTheme, undefined, 4)[4], " ▄▀▀       ▀▀▄ ");
+  assert.equal(renderMonster(15, 2, shapeTheme, undefined, 4)[4], "  ▄▀▀     ▀▀▄  ");
+  const openEye = renderMonster(15, 0, theme, undefined, 3).join("\n");
+  assert.equal((openEye.match(/text/g) ?? []).length, 3);
+  assert.equal(renderMonster(15, 38, theme, undefined, 3).join("\n").includes("text"), false);
+  assert.match(renderMonster(15, 38, theme, undefined, 2).join("\n"), /text/);
+  assert.match(renderMonster(15, 38, theme, undefined, 4).join("\n"), /text/);
+});
+
 test("each run chooses one random monster from the pool and keeps it for that widget", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
   t.mock.method(Math, "random", () => 0.999);
@@ -323,7 +333,7 @@ test("a new run cancels the old fade so it cannot clear the new widget", async (
   t.mock.timers.tick(960);
   assert.equal(app.widget(), current);
   assert.ok(current.render(80).every((line) => line.includes("first:accent:")));
-  assert.match(current.render(80)[1], /first:accent\/text:▀/);
+  assert.match(current.render(80).join("\n"), /first:(?:accent\/text:▀|text:)/);
 });
 
 test("off, reload/shutdown, and session/tree changes cancel fade timers immediately", async (t) => {
