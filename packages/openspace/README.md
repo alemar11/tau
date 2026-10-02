@@ -1,6 +1,6 @@
 # Openspace
 
-Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `tau-openspace`, versione `0.1.0`, privato; solo **macOS e Linux**, Node.js **22.19+**, target Pi **0.99.1**.
+Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `openspace`, versione `0.1.0`, privato; solo **macOS e Linux**, Node.js **22.19+**, target Pi **0.99.1**.
 
 ## Stato effettivo
 
@@ -15,9 +15,9 @@ Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri arg
 Dal checkout Tau, usare `mise install` e la shell mise (oppure anteporre `mise exec --` ai comandi) per Node 22.19.0. Installare le dipendenze del singolo workspace:
 
 ```sh
-npm install --ignore-scripts --workspace tau-openspace
-npm run check --workspace tau-openspace
-npm test --workspace tau-openspace
+npm install --ignore-scripts --workspace openspace
+npm run check --workspace openspace
+npm test --workspace openspace
 pi -e ./packages/openspace
 ```
 
@@ -91,7 +91,7 @@ I test vivono in `tests/`, fuori dalla discovery Pi. Coprono parsing/config erro
 ```sh
 npm run check
 npm test
-npm pack --dry-run --json --workspace tau-openspace
+npm pack --dry-run --json --workspace openspace
 ```
 
 Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. La validazione corrente non dimostra i percorsi di messaggistica o il funzionamento del futuro broker su entrambe le piattaforme.

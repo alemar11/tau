@@ -83,6 +83,9 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
     cwd: packageDir, env, encoding: "utf8", timeout: 30_000,
   }));
   assert.equal(packed.length, 1);
+  assert.equal(manifest.name, "openspace");
+  assert.equal(packed[0].name, "openspace");
+  assert.equal(packed[0].filename, `openspace-${manifest.version}.tgz`);
   const files = new Set(packed[0].files.map((file) => file.path));
   for (const name of ["cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "extensions/openspace/index.ts", "README.md", "package.json"]) {
     assert.ok(files.has(name), `missing ${name}`);

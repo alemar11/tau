@@ -11,7 +11,7 @@ Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by de
 | [codex-fast](packages/codex-fast/README.md) (`tau-codex-fast`) | Fast and ultrafast commands for supported OpenAI models |
 | [calm](packages/calm/README.md) (`calm`) | Quiet transcript presentation with a random animated pixel alien |
 | [orange](packages/orange/README.md) (`tau-orange`) | Orange-accent dark theme and stock footer without estimated cost |
-| [openspace](packages/openspace/README.md) (`tau-openspace`) | Package foundation for local session communication; messaging not implemented yet, not yet bundled |
+| [openspace](packages/openspace/README.md) (`openspace`) | Package foundation for local session communication; messaging not implemented yet, not yet bundled |
 
 ## Install the whole bundle
 
