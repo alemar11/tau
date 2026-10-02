@@ -1,0 +1,20 @@
+{
+  "name": "tau-openspace",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local communication between Pi sessions (package foundation; messaging not yet implemented)",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package", "pi-extension"],
+  "os": ["darwin", "linux"],
+  "engines": { "node": ">=22.19.0" },
+  "files": ["cli.mjs", "cli.ts", "extensions/", "src/", "README.md"],
+  "pi": { "extensions": ["./extensions/openspace/index.ts"] },
+  "bin": { "openspace": "./cli.mjs" },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "peerDependencies": { "@earendil-works/pi-coding-agent": "*" },
+  "dependencies": { "tsx": "^4.20.0" }
+}

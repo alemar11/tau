@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
+  "include": ["cli.ts", "src/**/*.ts", "extensions/**/*.ts"]
+}

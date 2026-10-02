@@ -1,0 +1,3 @@
+[tools]
+# Exercise the minimum supported Node version; do not override the user's global toolchain.
+node = "22.19.0"

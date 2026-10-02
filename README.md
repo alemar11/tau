@@ -11,6 +11,7 @@ Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by de
 | [codex-fast](packages/codex-fast/README.md) (`tau-codex-fast`) | Fast and ultrafast commands for supported OpenAI models |
 | [calm](packages/calm/README.md) (`calm`) | Quiet transcript presentation with a random animated pixel alien |
 | [orange](packages/orange/README.md) (`tau-orange`) | Orange-accent dark theme and stock footer without estimated cost |
+| [openspace](packages/openspace/README.md) (`tau-openspace`) | Package foundation for local session communication; messaging not implemented yet, not yet bundled |
 
 ## Install the whole bundle
 
@@ -58,13 +59,16 @@ Install individual packages when you do not want the full bundle. To switch from
 
 ## Develop
 
-From the repository root:
+The project-level `mise.toml` pins Node.js 22.19.0 to check the minimum supported runtime without changing the global Node version. From the repository root:
 
 ```sh
-npm install --ignore-scripts
-npm run check
-npm test
+mise install
+mise exec -- npm install --ignore-scripts
+mise exec -- npm run check
+mise exec -- npm test
 ```
+
+With mise shell activation, the ordinary `npm` commands use the project version automatically.
 
 The root commands run the available check/test scripts across all workspace packages. To work on only one package:
 
@@ -94,6 +98,7 @@ tau/
 └── packages/
     ├── calm/                 # quiet transcript extension and tests
     ├── orange/               # orange theme and cost-free footer
+    ├── openspace/            # package foundation; communication core pending
     └── codex-fast/
         ├── package.json      # independently installable Pi package
         ├── README.md
