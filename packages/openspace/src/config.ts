@@ -29,7 +29,8 @@ export type InboundTriggerPolicy = "always" | "replies" | "never";
 export type BusyDeliveryPolicy = "steer" | "human-first";
 
 export interface OpenspaceConfig {
-  brokerCommand: string;
+  /** Absent selects verified Node + the package-local tsx loader. */
+  brokerCommand?: string;
   brokerArgs: string[];
   enabled: boolean;
   replyHint: boolean;
@@ -43,8 +44,7 @@ export interface OpenspaceConfig {
 
 function defaultConfig(): OpenspaceConfig {
   return {
-    brokerCommand: "npx",
-    brokerArgs: ["--no-install", "tsx"],
+    brokerArgs: [],
     enabled: true,
     replyHint: true,
     confirmSend: false,
@@ -77,6 +77,9 @@ function parseConfig(input: unknown): OpenspaceConfig {
       throw new Error('"brokerArgs" must be an array of strings without NUL');
     }
     config.brokerArgs = [...value.brokerArgs];
+  }
+  if (!config.brokerCommand && config.brokerArgs.length) {
+    throw new Error('"brokerArgs" requires an explicit "brokerCommand"');
   }
   if (Object.hasOwn(value, "inboundTrigger")) {
     if (value.inboundTrigger !== "always" && value.inboundTrigger !== "replies" && value.inboundTrigger !== "never") {

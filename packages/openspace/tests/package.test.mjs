@@ -87,7 +87,7 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   assert.equal(packed[0].name, "openspace");
   assert.equal(packed[0].filename, `openspace-${manifest.version}.tgz`);
   const files = new Set(packed[0].files.map((file) => file.path));
-  for (const name of ["cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "extensions/openspace/index.ts", "README.md", "package.json"]) {
+  for (const name of ["cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "extensions/openspace/index.ts", "README.md", "package.json"]) {
     assert.ok(files.has(name), `missing ${name}`);
   }
   for (const name of files) assert.doesNotMatch(name, /(^|\/)(tests|fixtures|plans|node_modules|dist|coverage|\.pi)(\/|$)|\.test\.|package-lock|tsconfig/);
@@ -95,6 +95,8 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   assert.deepEqual(manifest.os, ["darwin", "linux"]);
   assert.deepEqual(manifest.pi, { extensions: ["./extensions/openspace/index.ts"] });
   assert.equal(manifest.private, true);
+  assert.equal(files.has("LICENSE"), false);
+  assert.equal(files.has("THIRD_PARTY_NOTICES.md"), false);
   assert.equal(manifest.exports, undefined);
   assert.deepEqual(Object.keys(manifest.dependencies), ["tsx"]);
   assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");

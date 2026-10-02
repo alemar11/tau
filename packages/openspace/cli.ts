@@ -7,7 +7,7 @@ export function runMain(args: string[] = process.argv.slice(2)): number {
     return 0;
   }
   if (args.length === 0 || (args.length === 1 && ["--help", "-h"].includes(args[0]))) {
-    console.log("Usage: openspace [--help | --version]\n\nPackage foundation only. Messaging commands (list/send/ask) are not implemented yet.");
+    console.log("Usage: openspace [--help | --version]\n\nMessaging commands (list/send/ask) are not implemented yet.");
     return 0;
   }
   console.error("Openspace messaging is not implemented yet. Only --help and --version are available.");

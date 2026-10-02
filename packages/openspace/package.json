@@ -2,7 +2,7 @@
   "name": "openspace",
   "version": "0.1.0",
   "private": true,
-  "description": "Local communication between Pi sessions (package foundation; messaging not yet implemented)",
+  "description": "Local communication between Pi sessions (local broker transport; messaging not yet implemented)",
   "type": "module",
   "license": "MIT",
   "keywords": ["pi-package", "pi-extension"],

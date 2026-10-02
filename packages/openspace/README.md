@@ -4,9 +4,9 @@ Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `o
 
 ## Stato effettivo
 
-Implementato il primo blocco, **package-foundation**: manifest, loader TypeScript, configurazione, path isolati, parsing iniziale dei workgroup e test. L'estensione valida la configurazione a `session_start`, non all'import, e non apre connessioni, processi, watcher o timer.
+Implementati **package-foundation** e **local-broker**: configurazione, namespace isolati, framing JSON, broker Unix, health, handshake minimo, avvio coordinato e shutdown. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
 
-**Non è ancora uno strumento di messaggistica utilizzabile.** Broker, registrazione, send/ask/reply, UI, comandi workgroup, persistenza per sessione, API estensioni e handover sono ancora da implementare. Herdr, SSH e bridge subagenti rimangono differiti. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
+**Non è ancora uno strumento di messaggistica utilizzabile.** Registry applicativo e routing ID, takeover, discovery, send/ask/reply, UI, comandi workgroup, persistenza per sessione, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -42,8 +42,7 @@ File opzionale: `$PI_CODING_AGENT_DIR/openspace/config.json`, altrimenti `~/.pi/
 ```json
 {
   "enabled": true,
-  "brokerCommand": "npx",
-  "brokerArgs": ["--no-install", "tsx"],
+  "brokerArgs": [],
   "replyHint": true,
   "confirmSend": false,
   "inboundTrigger": "always",
@@ -51,7 +50,9 @@ File opzionale: `$PI_CODING_AGENT_DIR/openspace/config.json`, altrimenti `~/.pi/
 }
 ```
 
-Questi sono i default della configurazione. I campi di delivery e launcher sono per i componenti successivi: **non avviano un broker in questa versione**. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
+Questi sono i default della configurazione. Senza `brokerCommand`, il launcher interno verifica Node.js 22.19+ e risolve `tsx/esm` dal package: niente `npx` o loader cercato nel cwd runtime, né riuso di un eseguibile host standalone come Node. `brokerCommand` opzionale sostituisce l'eseguibile; `brokerArgs` è il suo prefisso di argomenti, seguito dall'entry del broker e da `--runtime-dir <directory>`. Un prefisso non vuoto richiede un comando esplicito. Percorsi con spazi/Unicode vengono passati come argomenti, senza shell.
+
+**Caricare l'estensione non avvia ancora il broker**: il controller arriverà nei task successivi. I campi di delivery non sono ancora operativi. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
 
 Campi opzionali:
 
@@ -84,9 +85,37 @@ Il parser applica trim, deduplicazione e confronto esatto case-sensitive; rifiut
 
 La configurazione iniziale **non implementa** ancora `/openspace-workgroups` o la persistenza: le future preferenze della singola sessione, inclusa `[]`, prevarranno sull'ambiente. I workgroup organizzeranno routing/discovery, non autenticheranno peer né isoleranno il contesto del modello.
 
+## Broker locale: stato e limiti
+
+Per una prova esplicita dal checkout, senza configurazione Pi personale:
+
+```sh
+node --import tsx/esm ./packages/openspace/src/broker/main.ts --runtime-dir /tmp/openspace-demo/openspace
+```
+
+Il processo termina dopo **5 secondi** senza connessioni registrate. Il solo health non prolunga il timer; una registrazione lo annulla e l'ultima disconnessione lo riavvia. SIGINT/SIGTERM chiudono le connessioni e ripuliscono i file posseduti. Non è ancora un sottocomando del bin `openspace`.
+
+Il socket pubblico è `broker.sock` nella directory runtime. Limite portabile del path: **103 byte UTF-8**, senza fallback TCP; in caso di errore scegliere un agent dir più corto. Directory 0700, socket e record PID/lock 0600. Il socket pubblico è un hard link a un nome privato casuale della stessa istanza, non un secondo listener: la chiusura nativa non può cancellare il socket pubblico di una generazione successiva. Non rimuovere manualmente file mentre un broker è vivo.
+
+`src/broker/spawn.ts` fornisce l'helper interno `ensureBroker`: health prima/dopo la lock esclusiva, spawn detached dal cwd runtime e diagnostica stderr limitata a **16 KiB**. Le lock contengono PID, timestamp e identificatore di generazione, pubblicati atomicamente; anche il recupero concorrente di una generazione morta è serializzato. PID vivi, inclusi PID riutilizzati, non vengono rimossi perché un probe fallisce. Record corrotti, proprietà del socket sconosciuta o stato incoerente dopo uno startup interrotto richiedono ispezione manuale: nessuna cancellazione forzata di endpoint sconosciuti. Solo i processi avviati dal tentativo corrente vengono terminati dopo un errore/timeout.
+
+### Protocollo di trasporto iniziale (interno)
+
+Frame: **4 byte uint32 big-endian + JSON UTF-8**, payload massimo **1 MiB**, header escluso. Reader incrementale e writer verificano il limite dell'intero envelope; UTF-8/JSON malformati chiudono soltanto il peer responsabile.
+
+Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `requestId` non vuoto, massimo **256 byte UTF-8**, senza controlli ASCII. Operazioni implementate:
+
+- `health` → `health_result`, stesso requestId, versione, PID, instanceId e features; nessun dato di sessione o credenziale.
+- `register` con `workgroups: string[]` specifici → `registered`, connectionId effimero e gruppi effettivi. Lista vuota → `default`; duplicati normalizzati. L'intero acknowledgement rientra in **6 KiB**. Non è ancora un routing ID o un roster; metadata e fencing del registry arriveranno nel task successivo.
+- `ping` dopo register → `pong` correlato. Unica feature annunciata: `liveness-v1`; send esatto e bus estensioni non vengono pubblicizzati.
+
+Prima di register, operazioni applicative falliscono con `registration_required`; una seconda register chiude il peer con `already_registered`. Operazioni non implementate dopo register restituiscono `unsupported_operation`, mai un falso successo. Nome/versione incompatibili producono `incompatible_protocol`.
+
+Limiti per broker: **128** connessioni registrate, **32** non registrate, deadline di registrazione **1 s**; token bucket per connessione di **240** messaggi, refill **120/s**. Le write usano la coda nativa di Node, con un budget di **4 MiB per peer**, header inclusi: oltre il budget il peer lento viene disconnesso. Nessuna coda applicativa illimitata; i limiti sono di trasporto, non autorizzazione o isolamento da processi ostili dello stesso utente.
+
 ## Verifiche
 
-I test vivono in `tests/`, fuori dalla discovery Pi. Coprono parsing/config errori e boundary UTF-8, ambiente isolato, loader Pi, assenza di risorse durante import/avvio disabilitato e contenuto del tarball/launcher. Il manifest dichiara un solo entry point reale.
+I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
 
 ```sh
 npm run check
@@ -94,6 +123,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. La validazione corrente non dimostra i percorsi di messaggistica o il funzionamento del futuro broker su entrambe le piattaforme.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora i percorsi di messaggistica, il registry applicativo o l'integrazione del broker nel lifecycle Pi.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

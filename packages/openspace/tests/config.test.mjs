@@ -22,12 +22,12 @@ test("missing config returns independent defaults without creating runtime files
   const { root, configPath } = fixture(t);
   const first = loadConfig(configPath);
   assert.deepEqual(first, {
-    brokerCommand: "npx", brokerArgs: ["--no-install", "tsx"], enabled: true,
+    brokerArgs: [], enabled: true,
     replyHint: true, confirmSend: false, inboundTrigger: "always", busyDelivery: "steer",
   });
   first.brokerArgs.push("not-a-default");
   first.enabled = false;
-  assert.deepEqual(loadConfig(configPath).brokerArgs, ["--no-install", "tsx"]);
+  assert.deepEqual(loadConfig(configPath).brokerArgs, []);
   assert.equal(loadConfig(configPath).enabled, true);
   assert.deepEqual(readdirSync(root), []);
 });
@@ -48,6 +48,7 @@ test("known fields retain their meaning, strings/args are not silently altered",
   }
   assert.equal(config({ status: "" }).status, "");
   assert.deepEqual(config({ brokerArgs: [] }).brokerArgs, []);
+  assert.throws(() => config({ brokerArgs: ["--custom"] }), /brokerArgs.*brokerCommand/);
 });
 
 test("invalid JSON, roots and each known field fail with source diagnostics", (t) => {
