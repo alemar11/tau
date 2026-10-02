@@ -5,6 +5,7 @@ import codexFast from "../extensions/codex-fast.ts";
 const codex = { provider: "openai-codex", api: "openai-codex-responses", id: "gpt-5.4" };
 const openai = { provider: "openai", api: "openai-responses", id: "gpt-6-astra" };
 const stateEntry = (mode) => ({ type: "custom", customType: "tau:codex-fast", data: { mode } });
+const accent = (text) => `\x1b[38;2;255;154;60m${text}\x1b[39m`;
 
 function setup({ model = codex, entries = [], mode = "tui" } = {}) {
   const events = new Map();
@@ -15,6 +16,10 @@ function setup({ model = codex, entries = [], mode = "tui" } = {}) {
     model, mode, hasUI: mode === "tui" || mode === "rpc",
     sessionManager: { getBranch: () => entries },
     ui: {
+      theme: { fg: (color, text) => {
+        assert.equal(color, "accent");
+        return accent(text);
+      } },
       notify: (message, level) => notifications.push({ message, level }),
       setStatus: (key, text) => statuses.set(key, text),
     },
@@ -44,7 +49,7 @@ test("fast defaults to off and toggles priority without mutating the request", a
   await app.command();
   assert.deepEqual(app.request(payload), { ...payload, service_tier: "priority" });
   assert.equal(payload.service_tier, undefined);
-  assert.equal(app.status(), "fast");
+  assert.equal(app.status(), accent("fast"));
   await app.command();
   assert.equal(app.request(payload), undefined);
   assert.equal(app.status(), undefined);
@@ -83,7 +88,7 @@ test("ultrafast toggles its own tier only on supported provider/model pairs", as
     const app = setup({ model });
     await app.command("", "codex-ultrafast");
     assert.deepEqual(app.request(payload), { ...payload, service_tier: "ultrafast" });
-    assert.equal(app.status(), "ultrafast");
+    assert.equal(app.status(), accent("ultra fast"));
     await app.command("", "codex-ultrafast");
     assert.equal(app.request(payload), undefined);
     assert.equal(app.status(), undefined);
@@ -143,10 +148,27 @@ test("switching models hides and restores the compact label without losing the s
   await app.command("on", "codex-ultrafast");
   assert.equal(app.entries.length, 1);
   app.select(openai);
-  assert.equal(app.status(), "ultrafast");
+  assert.equal(app.status(), accent("ultra fast"));
   assert.equal(app.request(payload).service_tier, "ultrafast");
   app.select(undefined);
   await app.command("", "codex-ultrafast");
+  assert.equal(app.status(), undefined);
+});
+
+test("status styling uses the current theme accent on each refresh", async () => {
+  const app = setup({ model: openai });
+  await app.command("on");
+  assert.equal(app.status(), accent("fast"));
+  const nextAccent = (text) => `\x1b[38;2;240;120;30m${text}\x1b[39m`;
+  app.ctx.ui.theme.fg = (color, text) => {
+    assert.equal(color, "accent");
+    return nextAccent(text);
+  };
+  await app.command("status");
+  assert.equal(app.status(), nextAccent("fast"));
+  await app.command("on", "codex-ultrafast");
+  assert.equal(app.status(), nextAccent("ultra fast"));
+  await app.command("off");
   assert.equal(app.status(), undefined);
 });
 
@@ -165,7 +187,7 @@ test("reload/resume restores each mode from the active branch", async () => {
     const app = setup({ model: openai, entries: [stateEntry("fast"), stateEntry(mode)] });
     assert.equal(app.request(payload)?.service_tier,
       mode === "off" ? undefined : mode === "fast" ? "priority" : "ultrafast");
-    assert.equal(app.status(), mode === "off" ? undefined : mode);
+    assert.equal(app.status(), mode === "off" ? undefined : accent(mode === "ultrafast" ? "ultra fast" : "fast"));
     app.entries.length = 0;
     app.emit("session_start");
     assert.equal(app.request(payload), undefined);
@@ -188,7 +210,7 @@ test("tree navigation restores branch state and ignores unrelated or malformed e
   app.entries.splice(0, app.entries.length, stateEntry("fast"));
   app.emit("session_tree");
   assert.equal(app.request(payload).service_tier, "priority");
-  assert.equal(app.status(), "fast");
+  assert.equal(app.status(), accent("fast"));
   app.entries.length = 0;
   app.emit("session_tree");
   assert.equal(app.request(payload), undefined);

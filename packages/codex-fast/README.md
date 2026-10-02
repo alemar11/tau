@@ -47,7 +47,7 @@ Select a supported `openai` or legacy `openai-codex` model, then run:
 
 Only one mode can be selected at a time. Switching commands selects the other mode; repeating the selected mode's command turns it off. Unsupported models cannot enable a mode, but you can always turn a selected mode off.
 
-The footer shows only `fast` or `ultrafast` when the selected mode is eligible for the current model. The indicator is hidden when off or inactive. This indicates request eligibility, not confirmation that the server granted the tier. Switching to an unsupported model suspends the effect without clearing your selection; switching back restores it. Use either command with `status` for details.
+The footer shows `fast` or `ultra fast` (without an emoji) in the current theme's accent color (orange with `tau-orange`) when the selected mode is eligible for the current model. The indicator is hidden when off or inactive. Its styling refreshes on commands, model changes, reload/resume, and tree navigation. This indicates request eligibility, not confirmation that the server granted the tier. Switching to an unsupported model suspends the effect without clearing your selection; switching back restores it. Use either command with `status` for details.
 
 ### Supported models
 

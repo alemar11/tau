@@ -28,7 +28,8 @@ export default function codexFast(pi: ExtensionAPI) {
 
   function updateStatus(ctx: ExtensionContext) {
     if (ctx.mode !== "tui") return;
-    ctx.ui.setStatus(STATUS_KEY, supportsMode(ctx, mode) ? mode : undefined);
+    const label = mode === "ultrafast" ? "ultra fast" : "fast";
+    ctx.ui.setStatus(STATUS_KEY, supportsMode(ctx, mode) ? ctx.ui.theme.fg("accent", label) : undefined);
   }
 
   function restore(ctx: ExtensionContext) {
