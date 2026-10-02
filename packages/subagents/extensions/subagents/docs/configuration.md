@@ -1,0 +1,13 @@
+# Configuration
+
+Extension settings: `$PI_CODING_AGENT_DIR/tau-subagents/config.json` (default `~/.pi/agent/tau-subagents/config.json`). Agent overrides in Pi settings use the `tauSubagents` object. Configuration and state remain separate from other packages.
+
+Background defaults to true. Set `async:false` per call for foreground. No global context default is imposed over the profile preference. Default child depth is 2, per-run spawn budget 64, workflow concurrency 20, and single-child timeout 30 minutes. Writer queues allow at most 64 waiting tickets per canonical directory/root session; queue time is part of the original deadline.
+
+Managed state lives in the user-scoped `tau-subagents-*` temporary root, overridable with `TAU_SUBAGENTS_TEMP_ROOT`. Set an absolute persistent root if OS temporary-file cleanup is inappropriate. Writer state has schema version 1 in `writer-admission-v1/`. Other artifact schemas are independently versioned.
+
+Writer ownership is released only after SDK prompt settlement and observed tool completion. A crash or malformed transaction is not reclaimed by age or a PID guess. Investigate retained state and verify termination before any manual cleanup. Never remove a live or uncertain writer's state to bypass admission. Queue/admission is not an OS sandbox, nor a lock against the parent, other sessions or external programs.
+
+Native controls for timeout, tool/usage budgets, output bounds, artifact retention and fleet presentation remain available. Default artifact cleanup is governed by `artifactConfig.cleanupDays`; active/uncertain writer ownership is outside artifact retention. Do not store secrets in workflow args or public metadata.
+
+Phase-one policy rejects Git/worktree, terminal placement, external runner, scheduler, mission, watchdog, host-step, acceptance-gate and optional-integration options. It cannot be disabled in configuration. Foreground and background load explicitly selected child resources, never arbitrary ambient extensions. Tau Web is loaded once where required and its tool provenance is checked before prompting.

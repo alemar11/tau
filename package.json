@@ -11,7 +11,8 @@
       "./packages/codex-fast/extensions/codex-fast.ts",
       "./packages/calm/extensions/calm/index.ts",
       "./packages/orange/extensions/orange.ts",
-      "./packages/web/extensions/web/index.ts"
+      "./packages/web/extensions/web/index.ts",
+      "./packages/subagents/extensions/subagents/index.ts"
     ],
     "themes": ["./packages/orange/themes/tau-orange.json"]
   },
@@ -27,6 +28,8 @@
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "0.99.1",
+    "@earendil-works/pi-ai": "0.99.1",
     "@earendil-works/pi-coding-agent": "0.99.1",
     "@earendil-works/pi-tui": "0.99.1",
     "typescript": "^5.9.3",

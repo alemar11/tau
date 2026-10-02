@@ -1,0 +1,28 @@
+{
+  "name": "subagents",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native Pi delegation, workflows and supervision for Tau",
+  "type": "module",
+  "engines": { "node": ">=22.19.0" },
+  "files": ["extensions/", "README.md", "VALIDATION.md", "ROADMAP.md"],
+  "pi": { "extensions": ["./extensions/subagents/index.ts"] },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs tests/unit/*.test.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "acorn": "8.18.0",
+    "jiti": "2.7.0",
+    "undici": "8.10.2",
+    "yaml": "2.8.3",
+    "web": "file:../web"
+  }
+}

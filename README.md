@@ -13,6 +13,7 @@ Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by de
 | [orange](packages/orange/README.md) (`tau-orange`) | Orange-accent dark theme and stock footer without estimated cost |
 | [openspace](packages/openspace/README.md) (`openspace`) | Local session communication foundation and Unix broker transport; messaging not implemented yet, not yet bundled |
 | [web](packages/web/README.md) (`web`) | Web search, page/PDF reading, and branch-scoped cache |
+| [subagents](packages/subagents/README.md) (`subagents`) | Native Pi delegation, workflows, supervision and FIFO writer admission |
 
 ## Install the whole bundle
 
@@ -28,7 +29,7 @@ Or install from a local checkout:
 pi install /path/to/tau
 ```
 
-Restart Pi or run `/reload`. This loads codex-fast, Calm, Web, and Orange's footer extension, and makes the **tau-orange** theme available under `/settings` → Theme. Calm and Codex speed modes remain off until enabled with their commands. Web's three tools are available by default; see its README for authentication, explicit API billing modes, and cache limits.
+Restart Pi or run `/reload`. This loads codex-fast, Calm, Web, Subagents, and Orange's footer extension, and makes the **tau-orange** theme available under `/settings` → Theme. Calm and Codex speed modes remain off until enabled with their commands. Web's three tools are available by default; see its README for authentication, explicit API billing modes, and cache limits. Subagents exposes `subagent` and `/subagents`; delegation still requires operator authorization. Its phase-one scope and recovery limits are documented in its README.
 
 To try the bundle for one session from the repository root:
 
@@ -101,6 +102,7 @@ tau/
     ├── orange/               # orange theme and cost-free footer
     ├── openspace/            # foundation and broker transport; messaging pending
     ├── web/                  # search, document extraction, and cache
+    ├── subagents/            # native delegation, workflows, supervision, and tests
     └── codex-fast/
         ├── package.json      # independently installable Pi package
         ├── README.md

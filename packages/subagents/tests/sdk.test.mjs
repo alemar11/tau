@@ -1,0 +1,36 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { test } from "node:test";
+import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
+
+test("standalone package loads on the real Pi SDK without external integrations", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "tau-subagents-loader-"));
+  const old = process.env.PI_CODING_AGENT_DIR;
+  let shutdown = async () => {};
+  process.env.PI_CODING_AGENT_DIR = dir;
+  process.env.TAU_SUBAGENTS_TEMP_ROOT = join(dir, "runtime");
+  t.after(async () => { await shutdown(); if (old === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = old; delete process.env.TAU_SUBAGENTS_TEMP_ROOT; rmSync(dir, { recursive: true, force: true }); });
+  const loader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: SettingsManager.inMemory({ packages: [fileURLToPath(new URL("../", import.meta.url))] }), noSkills: true, noPromptTemplates: true, noContextFiles: true });
+  await loader.reload();
+  const loaded = loader.getExtensions();
+  assert.deepEqual(loaded.errors, []);
+  const extension = loaded.extensions.find((entry) => entry.tools.has("subagent"));
+  assert.ok(extension, "subagent registered");
+  const schema = JSON.stringify(extension.tools.get("subagent").definition.parameters);
+  assert.doesNotMatch(schema, /mission\.create|schedule\.create|inspector\.open|worktree\.cleanup/);
+  const profiles = join(dir, "tau-subagents", "agents"); mkdirSync(profiles, { recursive: true });
+  const provider = fileURLToPath(new URL("./support/provider.ts", import.meta.url));
+  writeFileSync(join(profiles, "sdk-fixture.md"), `---\nname: sdk-fixture\ndescription: deterministic fixture\nmodel: tau-fixture/local\ntools: read\nextensions: ${provider}\ninheritProjectContext: true\n---\nReturn a short answer.\n`);
+  const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, modelsStorePath: join(dir, "models.json"), refreshOnCreate: false, allowModelNetwork: false });
+  const { session } = await createAgentSession({ cwd: dir, agentDir: dir, resourceLoader: loader, modelRuntime, sessionManager: SessionManager.inMemory(dir), settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }) });
+  shutdown = async () => { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); session.dispose(); };
+  await session.bindExtensions({ mode: "json" });
+  const tool = session.agent.state.tools.find((entry) => entry.name === "subagent");
+  assert.ok(tool);
+  const outcome = await tool.execute("native-tool", { agent: "sdk-fixture", task: "Complete", async: false }, new AbortController().signal);
+  assert.match(JSON.stringify(outcome), /fixture complete/);
+  await assert.rejects(tool.execute("strict-fork", { agent: "sdk-fixture", task: "Do not launch", context: "fork", async: false }, new AbortController().signal), /fork|persist/i);
+});
