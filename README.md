@@ -9,7 +9,7 @@ Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by de
 | Package | Description |
 | --- | --- |
 | [codex-fast](packages/codex-fast/README.md) (`tau-codex-fast`) | Fast and ultrafast commands for supported OpenAI models |
-| [calm](packages/calm/README.md) (`calm`) | Quiet transcript presentation with an animated pixel alien |
+| [calm](packages/calm/README.md) (`calm`) | Quiet transcript presentation with a random animated pixel alien |
 | [orange](packages/orange/README.md) (`tau-orange`) | Orange-accent dark theme and stock footer without estimated cost |
 
 ## Install the whole bundle

@@ -2,7 +2,7 @@
   "name": "calm",
   "version": "0.1.0",
   "private": true,
-  "description": "Quiet transcript presentation and an animated pixel alien for Pi",
+  "description": "Quiet transcript presentation and random animated pixel aliens for Pi",
   "type": "module",
   "keywords": ["pi-package", "pi-extension"],
   "engines": {

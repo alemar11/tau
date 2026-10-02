@@ -1,6 +1,6 @@
 # calm
 
-Quiet transcript presentation for [Pi](https://pi.dev), with a Space Invaders-style pixel alien instead of “Working…”. Standalone: no Firstmate dependency or runtime dependencies. Requires Node.js 22.19+; verified against Pi 0.99.1.
+Quiet transcript presentation for [Pi](https://pi.dev), with a random Space Invaders-style pixel alien instead of “Working…”. Standalone: no Firstmate dependency or runtime dependencies. Requires Node.js 22.19+; verified against Pi 0.99.1.
 
 ## Install
 
@@ -38,7 +38,7 @@ While enabled:
 - Collapsed thinking labels disappear; expanded reasoning stays visible.
 - Routine collapsed rows for `bash`, `powershell`, `read`, `edit`, `write`, `grep`, `find`, and `ls` disappear. Failed calls show one summary line in the theme's `error` color (normally red), without the large tool panel: for example, `✗ bash — exited with code 1`. Shell failures prefer exit/timeout/abort status; other failures show the first nonempty error line. Long summaries are truncated to terminal width. Press `Ctrl+O` to reveal full error output. Image-bearing results, expanded tool rows, and other tools retain their normal rendering.
 - Settled assistant working notes before tool calls disappear only when they are a single line shorter than 240 trimmed characters. Multiline or longer content, streaming text, final answers, truncation notices, and assistant errors remain visible.
-- The stock working row is replaced by a five-row, fifteen-column pixel alien with antennae, square eyes, and separate hand/foot rows drawn with `▀`, `▄`, and `█`, like Pi's block-pixel logo. It walks one column every 480 ms across the full available width, turning at both edges, alternating its feet, and blinking briefly every 9.6 seconds. The body uses the active theme's `accent` color and the eyes use `text`. It switches to a six-column sprite in narrow terminals and a two-row, one-column sprite below six columns, never wrapping. It appears during a run. When Pi settles (including cancellation and failure), it freezes in place and fades through the theme's `muted` and `dim` colors over 480 ms before disappearing. A new run cancels the previous fade. Turning Calm off, changing sessions/branches, or reloading removes it immediately and cancels its timers.
+- The stock working row is replaced by one randomly chosen monster from a pool of five five-row, fifteen-column pixel aliens drawn with `▀`, `▄`, and `█`, like Pi's block-pixel logo. One monster is chosen per run and remains the same through its fade. It walks one column every 480 ms across the full available width, turning at both edges, alternating its feet, and blinking briefly every 9.6 seconds. When Pi exposes the current thinking level, the body uses the matching thinking-level border color at runtime; otherwise it falls back to the active theme's `accent` color. The eyes use `text`. It switches to a six-column sprite in narrow terminals and a two-row, one-column sprite below six columns, never wrapping. It appears during a run. When Pi settles (including cancellation and failure), it freezes in place and fades through the theme's `muted` and `dim` colors over 480 ms before disappearing. A new run cancels the previous fade. Turning Calm off, changing sessions/branches, or reloading removes it immediately and cancels its timers.
 
 ```text
    ▀▄     ▄▀

@@ -5,12 +5,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import calm from "../extensions/calm/index.ts";
+import { MONSTER_COUNT, renderMonster } from "../extensions/calm/monster.ts";
 
 initTheme();
 const stateEntry = (enabled) => ({ type: "custom", customType: "tau:calm", data: { enabled } });
-const plain = (lines) => lines.map((line) => line.replace(/(first|second):[a-z/]+:/g, ""));
+const plain = (lines) => lines.map((line) => line.replace(/(first|second):[A-Za-z/]+:/g, ""));
 
-function setup(t, { mode = "tui", entries = [] } = {}) {
+function setup(t, { mode = "tui", entries = [], thinkingLevel } = {}) {
   const events = new Map();
   const notifications = [];
   const uiCalls = [];
@@ -27,9 +28,15 @@ function setup(t, { mode = "tui", entries = [] } = {}) {
     hasUI: mode === "tui" || mode === "rpc",
     isIdle: () => idle,
     sessionManager: { getBranch: () => entries },
+    thinkingLevel,
     ui: {
       theme: {
-        colors: { accent: "accent", text: "text", muted: "muted", dim: "dim" },
+        colors: {
+          accent: "accent", text: "text", muted: "muted", dim: "dim",
+          thinkingOff: "thinkingOff", thinkingMinimal: "thinkingMinimal", thinkingLow: "thinkingLow",
+          thinkingMedium: "thinkingMedium", thinkingHigh: "thinkingHigh", thinkingXhigh: "thinkingXhigh",
+          thinkingMax: "thinkingMax",
+        },
         fg: (token, text) => `${color}:${token}:${text}`,
         style: (text, { fg, bg }) => `${color}:${fg}/${bg}:${text}`,
       },
@@ -69,6 +76,7 @@ function setup(t, { mode = "tui", entries = [] } = {}) {
     widget: () => widget,
     draws: () => draws,
     disposals: () => disposals,
+    tuiTheme: () => ctx.ui.theme,
     theme: (next) => { color = next; widget?.invalidate(); },
     failSave: () => { saveError = new Error("session write failed"); },
   };
@@ -207,6 +215,7 @@ test("a failed session write keeps the current state and UI unchanged", async (t
 
 test("the pixel monster walks, blinks, follows the live theme, and fades in place on settlement", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.method(Math, "random", () => 0);
   const app = setup(t);
   await app.command("on");
   assert.equal(app.widget(), undefined);
@@ -250,8 +259,31 @@ test("the pixel monster walks, blinks, follows the live theme, and fades in plac
   assert.equal(app.draws(), draws);
 });
 
+test("the monster body uses the current thinking-level border color when available", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.method(Math, "random", () => 0);
+  const app = setup(t, { thinkingLevel: "high" });
+  await app.command("on");
+  app.emit("agent_start");
+  assert.ok(app.widget().render(80).every((line) => line.includes("first:thinkingHigh:") && !line.includes("first:accent:")));
+  assert.match(app.widget().render(80)[1], /first:thinkingHigh\/text:▀/);
+});
+
+test("each run chooses one random monster from the pool and keeps it for that widget", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.method(Math, "random", () => 0.999);
+  const app = setup(t);
+  await app.command("on");
+  app.emit("agent_start");
+  const widget = app.widget();
+  assert.deepEqual(plain(widget.render(80)), plain(renderMonster(80, 0, app.tuiTheme(), undefined, MONSTER_COUNT - 1)));
+  t.mock.timers.tick(240);
+  assert.deepEqual(plain(widget.render(80)), plain(renderMonster(80, 1, app.tuiTheme(), undefined, MONSTER_COUNT - 1)));
+});
+
 test("the monster traverses the full width and turns at both edges without wrapping", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.method(Math, "random", () => 0);
   const app = setup(t);
   await app.command("on");
   app.emit("agent_start");

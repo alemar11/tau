@@ -1,11 +1,28 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { renderMonster } from "./monster.ts";
+import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
+import { MONSTER_COUNT, renderMonster } from "./monster.ts";
 import { installPresentation } from "./presentation.ts";
 
 const STATE_ENTRY = "tau:calm";
 const WIDGET_KEY = "tau:calm";
 const STATUS_KEY = "tau:calm";
 const INTERVAL_MS = 240;
+
+function monsterColorForThinkingLevel(level: ExtensionContext["thinkingLevel"]): ThemeColor {
+  switch (level) {
+    case "off": return "thinkingOff";
+    case "minimal": return "thinkingMinimal";
+    case "low": return "thinkingLow";
+    case "medium": return "thinkingMedium";
+    case "high": return "thinkingHigh";
+    case "xhigh": return "thinkingXhigh";
+    case "max": return "thinkingMax";
+    default: return "accent";
+  }
+}
+
+function randomMonsterIndex() {
+  return Math.floor(Math.random() * MONSTER_COUNT);
+}
 
 export default function calm(pi: ExtensionAPI) {
   let enabled = false;
@@ -20,6 +37,7 @@ export default function calm(pi: ExtensionAPI) {
   }
 
   function startAnimation(ctx: ExtensionContext) {
+    const monsterIndex = randomMonsterIndex();
     ctx.ui.setWidget(WIDGET_KEY, (tui) => {
       let tick = 0;
       let fade: "muted" | "dim" | undefined;
@@ -45,7 +63,7 @@ export default function calm(pi: ExtensionAPI) {
         timer.unref();
       };
       return {
-        render: (width) => renderMonster(width, tick, ctx.ui.theme, fade),
+        render: (width) => renderMonster(width, tick, ctx.ui.theme, fade, monsterIndex, monsterColorForThinkingLevel(ctx.thinkingLevel)),
         invalidate() {},
         dispose: () => {
           clearInterval(timer);
