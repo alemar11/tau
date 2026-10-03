@@ -44,7 +44,7 @@ export async function piSession(fixture, options = {}) {
       });
       installOpenspace(pi, { env, config, onRuntime: (next) => { runtime = next; } });
       options.extend?.(pi);
-    }] });
+    }, ...(options.factories ?? [])] });
   await loader.reload();
   const modelRuntime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, modelsStorePath: join(dir, "models.json"), refreshOnCreate: false, allowModelNetwork: false });
   const manager = options.manager ?? SessionManager.inMemory(dir);

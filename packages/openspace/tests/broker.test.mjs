@@ -26,7 +26,7 @@ test("Unix health, restrictive permissions and ordered transport handshake witho
   assert.equal(health.status, "ready");
   assert.equal(health.health.instanceId, broker.instanceId);
   assert.equal(health.health.pid, process.pid);
-  assert.deepEqual(health.health.features, ["liveness-v1", "session-registry-v1", "lease-resume-v1", "delivery-v1", "exact-send-v1", "ask-reply-v1"]);
+  assert.deepEqual(health.health.features, ["liveness-v1", "session-registry-v1", "lease-resume-v1", "delivery-v1", "exact-send-v1", "ask-reply-v1", "extension-bus-v1"]);
   assert.deepEqual(Object.keys(health.health).sort(), ["features", "instanceId", "pid", "protocol", "requestId", "type", "version"]);
   const peer = await raw(t, paths.socketPath);
   const registration = await peer.registration({ workgroups: ["a", "b", "a"] });
@@ -43,7 +43,7 @@ test("Unix health, restrictive permissions and ordered transport handshake witho
   assert.equal((await peer.request("register", "again", { workgroups: [] })).code, "already_registered");
   await peer.closed;
   await broker.stop(); await broker.stop();
-  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json", "state"]);
 });
 
 test("malformed or incompatible peers are isolated while an established peer keeps responding", async (t) => {
@@ -107,7 +107,7 @@ test("idle shutdown is cancelled by registration and restarts after the last dis
   await until(() => [...clock.timers].some((timer) => timer.at === clock.time + 5_000));
   clock.advance(5_000);
   await broker.closed;
-  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json", "state"]);
 });
 
 test("unregistered cap, registration deadline, registered cap and rate refill are enforced", async (t) => {

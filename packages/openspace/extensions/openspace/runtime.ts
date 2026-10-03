@@ -2,6 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { OpenspaceClient, ClientError } from "../../src/client/client.ts";
 import { ConnectionController } from "../../src/client/controller.ts";
+import { ChannelManager } from "../../src/client/channels.ts";
 import { Conversation } from "../../src/client/conversation.ts";
 import { messageRef, refKey, type MessageRef } from "../../src/protocol/delivery.ts";
 import { Messenger, type SendOptions } from "../../src/client/messenger.ts";
@@ -17,6 +18,7 @@ import { singleLine } from "./ui/render.ts";
 export class PiRuntime {
   readonly client: OpenspaceClient;
   readonly controller: ConnectionController;
+  readonly channels: ChannelManager;
   readonly messenger: Messenger;
   readonly conversation: Conversation;
   readonly receiver: Receiver;
@@ -43,6 +45,7 @@ export class PiRuntime {
       model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown", name: pi.getSessionName(), status: this.status() },
       workgroups: restoredWorkgroups(ctx, environment.workgroups), heartbeatMs: environment.livenessIntervalMs, heartbeatTimeoutMs: environment.livenessTimeoutMs });
     this.controller = new ConnectionController({ client: this.client, ensureBroker: () => ensureBroker(paths, config), onWarning: (error) => this.warn(error) });
+    this.channels = new ChannelManager(this.client);
     this.messenger = new Messenger(this.client);
     this.conversation = new Conversation(this.messenger, { timeoutMs: environment.askTimeoutMs, trackerTimeoutMs: environment.askTimeoutMs,
       onAnswered: (ref) => this.receiver.answered(ref) });
@@ -189,7 +192,7 @@ export class PiRuntime {
   }
   async stop(): Promise<void> {
     if (!this.alive) return;
-    this.alive = false; this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.unsubscribeReceipts(); this.receiver.stop(); this.messenger.dispose();
+    this.alive = false; this.channels.dispose(); this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.unsubscribeReceipts(); this.receiver.stop(); this.messenger.dispose();
     await this.controller.stop();
   }
 }

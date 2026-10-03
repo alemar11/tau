@@ -12,6 +12,8 @@ import { acquireClaim, identity, prepareRuntime, privateSocket, sameFile, unlink
 import { probeBroker } from "./probe.ts";
 import { DeliveryService, type DeliveryOptions } from "./delivery.ts";
 import { AskService, type AskOptions } from "./asks.ts";
+import { ChannelService } from "./channels.ts";
+import { ChannelStateStore, StateStorageError, type StateOptions } from "./channel-state.ts";
 
 import { systemClock, type Clock } from "../clock.ts";
 export { systemClock, type Clock } from "../clock.ts";
@@ -19,7 +21,7 @@ export const BROKER_LIMITS = {
   idleMs: 5_000, registrationMs: 1_000, unregistered: 32, registered: 128,
   rateCapacity: 240, ratePerSecond: 120, outputBytes: MAX_OUTPUT_BYTES,
 };
-export interface BrokerOptions { clock?: Clock; limits?: Partial<typeof BROKER_LIMITS>; leases?: LeaseOptions; delivery?: DeliveryOptions; asks?: AskOptions }
+export interface BrokerOptions { clock?: Clock; limits?: Partial<typeof BROKER_LIMITS>; leases?: LeaseOptions; delivery?: DeliveryOptions; asks?: AskOptions; channelState?: StateOptions }
 export interface Broker { readonly instanceId: string; readonly closed: Promise<void>; stop(): Promise<void> }
 interface Peer { socket: Socket; active: boolean; close(): void; reject(code: string, requestId?: string): void }
 
@@ -39,6 +41,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
   let registry: SessionRegistry;
   let delivery: DeliveryService;
   let asks: AskService;
+  let channels: ChannelService;
   let unregistered = 0;
   let cancelIdle: (() => void) | undefined;
   let cancelCheckpoint: (() => void) | undefined;
@@ -87,7 +90,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
           change.after ? project(viewer, change.after) : undefined);
       }
     }
-    asks.prune(); delivery.transition(change);
+    asks.prune(); delivery.transition(change); channels.transition(change);
   }
   const server = createServer((socket) => {
     socket.on("error", () => socket.destroy());
@@ -180,6 +183,17 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
                 case "receipt": send({ ...envelope("receipt_result", request.requestId), receipt: delivery.receipt(endpoint, request.receipt) }); break;
                 case "cancel": send({ ...envelope("control_result", request.requestId), ...delivery.cancel(endpoint, request.ref) }); break;
                 case "abandon-ask": asks.abandon(endpoint, request.ref); send(envelope("ask_abandoned", request.requestId)); break;
+                case "channel-register": {
+                  const { announce, ...result } = channels.register(endpoint, request);
+                  try { send({ ...envelope("channel_registered", request.requestId), ...result }); } finally { announce(); }
+                  break;
+                }
+                case "channel-publish": send({ ...envelope("channel_published", request.requestId), result: channels.publish(endpoint, request) }); break;
+                case "channel-commit": {
+                  const result = channels.commit(endpoint, request);
+                  try { send({ ...envelope("channel_state_result", request.requestId), status: "committed", state: result.state }); } finally { result.announce(); }
+                  break;
+                }
                 case "update": mutation = registry.update(endpoint, request.expectedRevision, request.patch); break;
                 case "set-workgroups": mutation = registry.setWorkgroups(endpoint, request.expectedRevision, request.workgroups); break;
                 default: send({ ...envelope("error", request.requestId), code: "unsupported_operation" });
@@ -197,7 +211,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
           return !socket.destroyed && !closing && !stopping;
         });
       } catch (error) {
-        if (error instanceof LeaseStorageError) { peer.reject("storage_failed"); void stop(); }
+        if (error instanceof LeaseStorageError || error instanceof StateStorageError) { peer.reject("storage_failed"); void stop(); }
         else if (error instanceof ProtocolError) peer.reject(error.code, error.requestId);
         else socket.destroy();
       }
@@ -263,6 +277,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
     registry = new SessionRegistry(new LeaseStore(paths.runtimeDir, options.leases), paths.runtimeDir, options.leases?.now, limits.registered);
     asks = new AskService(registry, forward, paths.runtimeDir, options.asks);
     delivery = new DeliveryService(registry, forward, asks, options.delivery);
+    channels = new ChannelService(registry, new ChannelStateStore(paths.runtimeDir, options.channelState), forward);
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(ownedSocket, () => { server.off("error", reject); resolve(); });

@@ -95,7 +95,7 @@ test("lost revocation cannot reclaim an ID after real process SIGKILL/restart, e
   assert.equal(lstatSync(ledger).mode & 0o777, 0o600);
   assert.ok(!readFileSync(ledger, "utf8").includes('"shared"'));
   await terminate(second.pid);
-  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json", "state"]);
 });
 
 test("an unobserved registration acknowledgement resumes with its original ticket, not a new takeover", async (t) => {

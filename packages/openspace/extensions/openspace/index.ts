@@ -6,6 +6,7 @@ import { PiRuntime } from "./runtime.ts";
 import { registerTools } from "./tools.ts";
 import { registerCommands } from "./commands.ts";
 import { renderMessage } from "./ui/render.ts";
+import { ChannelRegistry } from "./channels.ts";
 
 /** Internal injection seam for isolated SDK fixtures; not the public extension bus API. */
 export interface InstallOptions {
@@ -16,22 +17,27 @@ export interface InstallOptions {
 export function installOpenspace(pi: ExtensionAPI, options: InstallOptions = {}): void {
   let runtime: PiRuntime | undefined;
   let generation = 0;
+  const channels = new ChannelRegistry(pi.events);
   registerTools(pi, () => runtime);
   registerCommands(pi, () => runtime);
   pi.registerMessageRenderer("openspace_message", (message, { expanded }, theme) => renderMessage(
     typeof message.content === "string" ? message.content : JSON.stringify(message.content), message.details, expanded, theme));
   pi.on("session_start", async (_event, ctx) => {
-    const epoch = ++generation, previous = runtime; runtime = undefined;
+    const epoch = ++generation, previous = runtime; runtime = undefined; channels.pause();
     await previous?.stop();
     if (epoch !== generation) return;
     const env = { ...(options.env ?? process.env) }, paths = resolvePaths(env);
     const config = options.config ?? loadConfig(paths.configPath);
-    if (!config.enabled) return;
+    if (!config.enabled) { channels.disable(); return; }
     if (process.platform !== "darwin" && process.platform !== "linux") throw new Error("Openspace supports macOS and Linux only");
     runtime = new PiRuntime(pi, ctx, paths, config, loadEnvironment(env));
-    options.onRuntime?.(runtime); runtime.start();
+    channels.start(runtime.channels); options.onRuntime?.(runtime); runtime.start();
   });
-  pi.on("session_shutdown", async () => { generation++; const previous = runtime; runtime = undefined; await previous?.stop(); });
+  pi.on("session_shutdown", async (event) => {
+    generation++; const previous = runtime; runtime = undefined;
+    if (event.reason === "reload" || event.reason === "quit") channels.dispose(); else channels.pause();
+    await previous?.stop();
+  });
   const observe = (event: { type: string }, ctx: ExtensionContext) => { runtime?.event(event.type, ctx); };
   pi.on("agent_start", observe);
   pi.on("agent_end", observe);

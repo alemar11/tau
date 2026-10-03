@@ -87,7 +87,7 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   assert.equal(packed[0].name, "openspace");
   assert.equal(packed[0].filename, `openspace-${manifest.version}.tgz`);
   const files = new Set(packed[0].files.map((file) => file.path));
-  for (const name of ["cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "src/registry/registry.ts", "src/registry/session.ts", "src/registry/leases.ts", "src/clock.ts", "src/client/client.ts", "src/client/controller.ts", "src/client/responses.ts", "src/client/messenger.ts", "src/client/conversation.ts", "src/client/reply-tracker.ts", "src/broker/asks.ts", "src/protocol/delivery.ts", "src/broker/delivery.ts", "extensions/openspace/index.ts", "extensions/openspace/commands.ts", "extensions/openspace/ui/overlay.ts", "extensions/openspace/ui/render.ts", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md", "UI.md", "package.json"]) {
+  for (const name of ["extension-api.mjs", "extension-api.d.mts", "src/protocol/channels.ts", "src/client/channels.ts", "src/broker/channels.ts", "src/broker/channel-state.ts", "extensions/openspace/channels.ts", "cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "src/registry/registry.ts", "src/registry/session.ts", "src/registry/leases.ts", "src/clock.ts", "src/client/client.ts", "src/client/controller.ts", "src/client/responses.ts", "src/client/messenger.ts", "src/client/conversation.ts", "src/client/reply-tracker.ts", "src/broker/asks.ts", "src/protocol/delivery.ts", "src/broker/delivery.ts", "extensions/openspace/index.ts", "extensions/openspace/commands.ts", "extensions/openspace/ui/overlay.ts", "extensions/openspace/ui/render.ts", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md", "UI.md", "CHANNELS.md", "package.json"]) {
     assert.ok(files.has(name), `missing ${name}`);
   }
   for (const name of files) assert.doesNotMatch(name, /(^|\/)(tests|fixtures|plans|node_modules|dist|coverage|\.pi)(\/|$)|\.test\.|package-lock|tsconfig/);
@@ -97,7 +97,7 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   assert.equal(manifest.private, true);
   assert.equal(files.has("LICENSE"), false);
   assert.equal(files.has("THIRD_PARTY_NOTICES.md"), false);
-  assert.equal(manifest.exports, undefined);
+  assert.deepEqual(manifest.exports["./extension-api"], { types: "./extension-api.d.mts", default: "./extension-api.mjs" });
   assert.deepEqual(Object.keys(manifest.dependencies), ["tsx"]);
   assert.equal(manifest.peerDependencies["@earendil-works/pi-coding-agent"], "*");
 
@@ -112,6 +112,20 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
     assert.match(source, /THE SOFTWARE IS PROVIDED "AS IS"/);
   }
   assert.equal(readFileSync(join(unpacked, "cli.mjs"), "utf8").split("\n")[0], "#!/usr/bin/env node");
+
+  // A real tarball installation, without host peers or registry access. Reuse only the already-installed runtime dependency as a local npm dependency.
+  const consumer = join(root, "consumer"); mkdirSync(consumer);
+  const tsx = dirname(fileURLToPath(import.meta.resolve("tsx/package.json")));
+  writeFileSync(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { openspace: `file:${join(root, packed[0].filename)}`, tsx: `file:${tsx}` }, overrides: { tsx: "$tsx" } }));
+  const installed = spawnSync("npm", ["install", "--offline", "--ignore-scripts", "--legacy-peer-deps", "--no-audit", "--no-fund"], { cwd: consumer, env: environment(root), encoding: "utf8", timeout: 30_000 });
+  assert.equal(installed.status, 0, installed.stderr);
+  assert.equal(existsSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent")), false);
+  const imported = spawnSync(process.execPath, ["--input-type=module", "-e", 'import { OPENSPACE_EXTENSION_REGISTER_EVENT, OPENSPACE_EXTENSION_FEATURE } from "openspace/extension-api"; if (OPENSPACE_EXTENSION_REGISTER_EVENT !== "openspace:extension-register" || OPENSPACE_EXTENSION_FEATURE !== "extension-bus-v1") throw new Error("invalid API"); console.log("api-ok");'], { cwd: consumer, env: environment(root), encoding: "utf8", timeout: 15_000 });
+  assert.equal(imported.status, 0, imported.stderr); assert.equal(imported.stdout.trim(), "api-ok");
+  assert.equal(existsSync(join(root, "agent")), false);
+  writeFileSync(join(consumer, "consumer.mts"), 'import type { ExtensionRegistration } from "openspace/extension-api"; const registration: ExtensionRegistration = { namespace: "example", ownerEligible: true, onReady(channel) { const id: string = channel.commitState({ ok: true }, 0); void channel.publish({ id }, { audience: "capable" }); }, onEvent(event) { if (event.type === "state_result") { const id: string = event.requestId; } } };');
+  const checked = spawnSync(process.execPath, [fileURLToPath(import.meta.resolve("typescript/bin/tsc")), "--noEmit", "--strict", "--module", "NodeNext", "--target", "ES2022", join(consumer, "consumer.mts")], { cwd: consumer, env: environment(root), encoding: "utf8", timeout: 30_000 });
+  assert.equal(checked.status, 0, checked.stdout + checked.stderr);
 });
 
 test("launcher runs without Pi imports and refuses unavailable commands without touching the runtime", (t) => {

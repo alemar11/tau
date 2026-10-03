@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { milliseconds, systemClock, type Clock } from "../clock.ts";
 import { parseMessage, parseRef, RECEIPTS } from "../protocol/delivery.ts";
+import { channelPacket } from "../protocol/channels.ts";
 import { encodeFrame, FrameDecoder, writeEncodedFrame } from "../protocol/framing.ts";
 import { envelope, isHealth, requestId } from "../protocol/messages.ts";
 import { normalizeSpecificWorkgroups } from "../workgroups.ts";
@@ -253,6 +254,8 @@ export class OpenspaceClient {
       } else if (value.type === "ask_closed") {
         parseRef(value.ref);
         if (typeof value.code !== "string" || !/^[a-z_]{1,64}$/.test(value.code)) throw new ClientError("invalid_response");
+      } else if (value.type === "channel_event") {
+        channelPacket(value);
       } else if (value.type === "message_control") {
         parseRef(value.ref);
         if (value.action !== "cancelled" && value.action !== "superseded") throw new ClientError("invalid_response");

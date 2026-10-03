@@ -229,10 +229,10 @@ test("takeover halts the Pi controller and warns without ending Pi or reclaiming
 
 test("shutdown while startup is yielding cannot create a late runtime", async () => {
   const handlers = new Map(); let started = false;
-  installOpenspace({ on: (event, fn) => handlers.set(event, fn), registerTool() {}, registerMessageRenderer() {}, registerCommand() {} },
+  installOpenspace({ events: { on: () => () => {}, emit() {} }, on: (event, fn) => handlers.set(event, fn), registerTool() {}, registerMessageRenderer() {}, registerCommand() {} },
     { env: {}, onRuntime() { started = true; } });
   const starting = handlers.get("session_start")({}, {});
-  await handlers.get("session_shutdown")(); await starting;
+  await handlers.get("session_shutdown")({ reason: "quit" }); await starting;
   assert.equal(started, false);
 });
 

@@ -4,9 +4,9 @@ Package Pi autonomo per la comunicazione locale fra sessioni. Nome npm `openspac
 
 ## Stato effettivo
 
-Implementati i passi **01–08**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply e UI. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
+Implementati i passi **01–09**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply, UI e canali per estensioni. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
 
-Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). **API estensioni, CLI operativa e handover non sono ancora disponibili.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
+Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). L'API pubblica per [canali e stato revisionato](CHANNELS.md) è disponibile. **Outbox/identity claim, CLI operativa e handover non sono ancora disponibili.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -52,7 +52,7 @@ File opzionale: `$PI_CODING_AGENT_DIR/openspace/config.json`, altrimenti `~/.pi/
 
 Questi sono i default della configurazione. Senza `brokerCommand`, il launcher interno verifica Node.js 22.19+ e risolve `tsx/esm` dal package: niente `npx` o loader cercato nel cwd runtime, né riuso di un eseguibile host standalone come Node. `brokerCommand` opzionale sostituisce l'eseguibile; `brokerArgs` è il suo prefisso di argomenti, seguito dall'entry del broker e da `--runtime-dir <directory>`. Un prefisso non vuoto richiede un comando esplicito. Percorsi con spazi/Unicode vengono passati come argomenti, senza shell.
 
-Il factory registra soltanto tool, comandi, renderer e handler. **A `session_start` l'estensione abilitata avvia o riusa il broker e si registra**; shutdown/reload/sostituzione chiudono le risorse del vecchio runtime. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
+Il factory registra soltanto tool, comandi, renderer, handler e handshake del bus locale. **A `session_start` l'estensione abilitata avvia o riusa il broker e si registra**; shutdown/reload/sostituzione chiudono le risorse del vecchio runtime. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
 
 Campi opzionali:
 
@@ -93,7 +93,7 @@ Per una prova esplicita dal checkout, senza configurazione Pi personale:
 node --import tsx/esm ./packages/openspace/src/broker/main.ts --runtime-dir /tmp/openspace-demo/openspace
 ```
 
-Il processo termina dopo **5 secondi** senza connessioni registrate. Il solo health non prolunga il timer; una registrazione lo annulla e l'ultima disconnessione lo riavvia. SIGINT/SIGTERM chiudono le connessioni e ripuliscono socket/PID posseduti; `leases.json` resta per il fencing dopo restart. Non è ancora un sottocomando del bin `openspace`.
+Il processo termina dopo **5 secondi** senza connessioni registrate. Il solo health non prolunga il timer; una registrazione lo annulla e l'ultima disconnessione lo riavvia. SIGINT/SIGTERM chiudono le connessioni e ripuliscono socket/PID posseduti; `leases.json` resta per il fencing dopo restart e `state/` conserva lo stato dei canali. Non è ancora un sottocomando del bin `openspace`.
 
 Il socket pubblico è `broker.sock` nella directory runtime. Limite portabile del path: **103 byte UTF-8**, senza fallback TCP; in caso di errore scegliere un agent dir più corto. Directory 0700, socket e record PID/lock 0600. Il socket pubblico è un hard link a un nome privato casuale della stessa istanza, non un secondo listener: la chiusura nativa non può cancellare il socket pubblico di una generazione successiva. Non rimuovere manualmente file mentre un broker è vivo.
 
@@ -108,7 +108,8 @@ Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `request
 - `health` → `health_result`, stesso requestId, versione, PID, instanceId e features; nessun dato di sessione o credenziale.
 - `prepare {id}` → ticket di lease; `register` con lease, mode claim/resume, session e gruppi specifici → `registered` con record completo (massimo **6 KiB**). La lease resta valida per resume soltanto mentre il broker conserva quella ownership.
 - `list`, `list-cwd`, `resolve`, `update`, `set-workgroups`, `release`: registry e mutazioni correlate, con proiezione dei gruppi visibili e revisioni CAS.
-- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`, `delivery-v1`, `exact-send-v1`, `ask-reply-v1`; il bus estensioni non viene ancora pubblicizzato.
+- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`, `delivery-v1`, `exact-send-v1`, `ask-reply-v1`, `extension-bus-v1`.
+- `channel-register`, `channel-publish`, `channel-commit`: binding di capability, invio non conversazionale e commit correlato dello stato; dettagli in [CHANNELS.md](CHANNELS.md).
 
 Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il controller core ferma retry e reconnect impliciti dopo il rifiuto; l'adapter avvisa e lascia proseguire Pi, senza reclamare nuovamente l'ID.
 
@@ -148,6 +149,10 @@ Il custom message `openspace_message` conserva dettagli, gruppo, provenienza e a
 
 Il [contratto ask/reply](ASKS.md) descrive waiter single-flight, selezione pending, inferenza send, validazione broker, timeout indipendenti e diagnostica non durevole. Ask richiede un peer live; la risposta con allegati ritorna nello stesso risultato tool. Timeout non cancella il lavoro, abort del waiter non equivale a cancel del messaggio e le reply non cambiano gruppo.
 
+## Canali per estensioni
+
+L'export autonomo `openspace/extension-api` fornisce handshake, canali vincolati a un workgroup, ownership per namespace e stato persistente CAS. Nessun dato di questo percorso attiva Pi o passa nella conversazione. Il [contratto dei canali](CHANNELS.md) descrive limiti, callback, esiti incerti e recupero con backup, distinto dal fencing delle lease.
+
 ## Verifiche
 
 I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout, takeover/restart, roster massimo, status, revisioni, visibilità e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
@@ -158,6 +163,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato. Due consumer Pi reali verificano canali/stato e ordine inverso di caricamento senza sendMessage, entry o chiamate modello; i test coprono anche ack persi, quote, CAS, leave/rejoin, SIGKILL, corruzione/backup e import/tipi da tarball installato senza peer Pi.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

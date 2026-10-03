@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import { effectiveWorkgroups } from "../workgroups.ts";
+import type { SessionInfo, SessionStatus } from "../../extension-api.mjs";
+export type { SessionInfo, SessionStatus, ContextUsage } from "../../extension-api.mjs";
 
 export const MAX_SESSION_BYTES = 6 * 1024;
 export const MAX_SESSIONS = 128;
@@ -41,16 +43,6 @@ export function canonicalCwd(value: unknown, base: string): string {
     throw new RegistryError("invalid_cwd");
   }
 }
-export type SessionStatus = { state: "idle" | "thinking"; note?: string }
-  | { state: "tool"; toolName: string; note?: string };
-export interface ContextUsage { tokens: number | null; contextWindow: number; percent: number | null }
-export interface SessionInfo {
-  id: string; endpointEpoch: string; revision: number; membershipRevision: number;
-  workgroups: string[]; name?: string; runtimeFallbackAlias?: string;
-  cwd: string; model: string; pid: number; startedAt: number; lastActivity: number;
-  status?: SessionStatus; contextUsage?: ContextUsage; tmuxPane?: string; trustedLocal: true;
-}
-
 function status(value: unknown): SessionStatus {
   if (!object(value)) throw new RegistryError("invalid_status");
   keys(value, value.state === "tool" ? ["state", "toolName", "note"] : ["state", "note"]);
