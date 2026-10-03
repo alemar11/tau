@@ -4,9 +4,9 @@ Package Pi autonomo per la comunicazione locale fra sessioni. Nome npm `openspac
 
 ## Stato effettivo
 
-Implementati i passi **01–09**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply, UI e canali per estensioni. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
+Implementati i passi **01–10**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply, UI, canali, outbox e identity claim per estensioni. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
 
-Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). L'API pubblica per [canali e stato revisionato](CHANNELS.md) è disponibile. **Outbox/identity claim, CLI operativa e handover non sono ancora disponibili.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
+Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). Le API pubbliche per [canali e stato revisionato](CHANNELS.md) e [outbox/identity claim](OUTBOX.md) sono disponibili. **CLI operativa e handover non sono ancora disponibili.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -56,7 +56,7 @@ Il factory registra soltanto tool, comandi, renderer, handler e handshake del bu
 
 Campi opzionali:
 
-- `stableId`: stringa non vuota, normalizzata con trim. Il routing ID è unico nell'intero broker: un valore globale può provocare takeover anche fra workgroup disgiunti. La precedenza è ambiente, config, ID della sessione Pi.
+- `stableId`: stringa non vuota, normalizzata con trim. Il routing ID è unico nell'intero broker: un valore globale può provocare takeover anche fra workgroup disgiunti. La precedenza è claim locale sincrona, ambiente, config, ID della sessione Pi; vedere [OUTBOX.md](OUTBOX.md).
 - `status`: nota personalizzata, massimo **1 KiB UTF-8**, conservata senza troncamento. Non sostituisce lo stato `idle/thinking/tool`, prodotto dal lifecycle Pi con tool concorrenti tracciati per call ID. Il registry verifica il limite complessivo del record di presenza da 6 KiB.
 
 Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = `steer | human-first`; gli altri flag sono booleani, `brokerArgs` un array di stringhe. Command, argomenti e stable ID rifiutano NUL espliciti. Config assente → default; JSON/campi noti invalidi o errori di lettura → errore con path e campo ove applicabile, mai fallback silenzioso. Le chiavi sconosciute vengono ignorate, non abilitate come funzionalità. Non sono consumate opzioni Herdr/SSH.
@@ -153,6 +153,10 @@ Il [contratto ask/reply](ASKS.md) descrive waiter single-flight, selezione pendi
 
 L'export autonomo `openspace/extension-api` fornisce handshake, canali vincolati a un workgroup, ownership per namespace e stato persistente CAS. Nessun dato di questo percorso attiva Pi o passa nella conversazione. Il [contratto dei canali](CHANNELS.md) descrive limiti, callback, esiti incerti e recupero con backup, distinto dal fencing delle lease.
 
+## Outbox e identity claim
+
+L'outbox locale è notify-only, con sender derivato dalla sessione, attribuzione strutturata, consenso e risultato terminale. Gli ID delle richieste sono univoci nell'intero runtime, non per producer. Una claim sincrona può assegnare l'ID di routing prima della registrazione, senza cambiare nome, identità Pi delle preferenze o ambiente globale. [OUTBOX.md](OUTBOX.md) documenta limiti, errori, lifecycle ed esempio consumer caricato esplicitamente.
+
 ## Verifiche
 
 I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout, takeover/restart, roster massimo, status, revisioni, visibilità e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
@@ -163,6 +167,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato. Due consumer Pi reali verificano canali/stato e ordine inverso di caricamento senza sendMessage, entry o chiamate modello; i test coprono anche ack persi, quote, CAS, leave/rejoin, SIGKILL, corruzione/backup e import/tipi da tarball installato senza peer Pi.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato. Due consumer Pi reali verificano canali/stato e ordine inverso di caricamento senza sendMessage, entry o chiamate modello; i test coprono anche ack persi, quote, CAS, leave/rejoin, SIGKILL, corruzione/backup e import/tipi da tarball installato senza peer Pi. L'outbox è verificata tra sessioni Pi reali con attribution, dialoghi sospesi, duplicati fra producer, budget, routing live, leave/rejoin, reload/shutdown, invii incerti e identità per-sessione senza mutazioni globali.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

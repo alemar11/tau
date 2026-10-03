@@ -14,11 +14,14 @@ import type { Message } from "../../src/protocol/delivery.ts";
 import { Receiver, BUSY_NOTICE, messageContent } from "./receiver.ts";
 import { restoredWorkgroups, WorkgroupPreferences } from "./preferences.ts";
 import { singleLine } from "./ui/render.ts";
+import { Outbox, type OutboxOptions } from "./outbox.ts";
+import type { OutboxRequest, OutboxResult } from "../../extension-api.mjs";
 
 export class PiRuntime {
   readonly client: OpenspaceClient;
   readonly controller: ConnectionController;
   readonly channels: ChannelManager;
+  readonly outbox: Outbox;
   readonly messenger: Messenger;
   readonly conversation: Conversation;
   readonly receiver: Receiver;
@@ -38,10 +41,10 @@ export class PiRuntime {
   private publishing = false;
   private lastPresence?: string;
   private readonly lifetime = new AbortController();
-  constructor(pi: ExtensionAPI, ctx: ExtensionContext, paths: OpenspacePaths, config: OpenspaceConfig, environment: OpenspaceEnvironment) {
+  constructor(pi: ExtensionAPI, ctx: ExtensionContext, paths: OpenspacePaths, config: OpenspaceConfig, environment: OpenspaceEnvironment, options: { identity?: string; outbox?: OutboxOptions } = {}) {
     this.pi = pi; this.ctx = ctx; this.config = config; this.sessionId = ctx.sessionManager.getSessionId(); this.note = config.status;
     this.client = new OpenspaceClient({ socketPath: paths.socketPath, session: {
-      id: environment.stableId ?? config.stableId ?? this.sessionId, cwd: ctx.cwd, pid: process.pid,
+      id: options.identity ?? environment.stableId ?? config.stableId ?? this.sessionId, cwd: ctx.cwd, pid: process.pid,
       model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "unknown", name: pi.getSessionName(), status: this.status() },
       workgroups: restoredWorkgroups(ctx, environment.workgroups), heartbeatMs: environment.livenessIntervalMs, heartbeatTimeoutMs: environment.livenessTimeoutMs });
     this.controller = new ConnectionController({ client: this.client, ensureBroker: () => ensureBroker(paths, config), onWarning: (error) => this.warn(error) });
@@ -89,6 +92,7 @@ export class PiRuntime {
       if (event.type === "state" && event.state === "revoked") this.receiver.stop("endpoint_revoked");
       if (event.type === "state" && event.state === "registered") { this.lastPresence = undefined; this.publishPresence(); }
     });
+    this.outbox = new Outbox(pi, this, options.outbox);
   }
   start(): void { this.controller.start(); }
   get context(): ExtensionContext { return this.ctx; }
@@ -183,6 +187,14 @@ export class PiRuntime {
     }
     return result;
   }
+  traceOutbox(request: OutboxRequest, result: OutboxResult): void {
+    if (!this.alive || this.compacting) return;
+    try {
+      this.assertCurrent();
+      this.pi.appendEntry("openspace_outbox_result", { request, result, senderId: this.client.info?.id,
+        provenance: { kind: "extension_outbox", extensionId: request.extensionId, extensionName: request.extensionName }, recordedAt: Date.now() });
+    } catch { console.error("Openspace: trace outbox non salvata; l'esito del trasporto non cambia."); }
+  }
   warn(error: unknown): void {
     if (!this.alive) return;
     const text = error instanceof Error ? error.message : "Openspace error";
@@ -192,7 +204,7 @@ export class PiRuntime {
   }
   async stop(): Promise<void> {
     if (!this.alive) return;
-    this.alive = false; this.channels.dispose(); this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.unsubscribeReceipts(); this.receiver.stop(); this.messenger.dispose();
+    this.alive = false; this.outbox.stop(); this.channels.dispose(); this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.unsubscribeReceipts(); this.receiver.stop(); this.messenger.dispose();
     await this.controller.stop();
   }
 }

@@ -41,3 +41,35 @@ export interface ExtensionRegistration {
   onEvent(event: ChannelEvent): void;
 }
 export interface ExtensionRegistryReady { version: 1 }
+
+export declare const OPENSPACE_OUTBOX_REQUEST_EVENT: "openspace:outbox-request";
+export declare const OPENSPACE_OUTBOX_RESULT_EVENT: "openspace:outbox-result";
+export declare const OPENSPACE_SESSION_IDENTITY_EVENT: "openspace:session-identity";
+export declare const OPENSPACE_OUTBOX_CODES: Readonly<{
+  invalidRequest: "invalid_outbox_request"; duplicateRequest: "duplicate_request";
+  idCapacity: "outbox_id_capacity"; pendingCapacity: "outbox_pending_capacity";
+  unavailable: "openspace_unavailable"; confirmationUnavailable: "confirmation_unavailable";
+  confirmationCancelled: "confirmation_cancelled"; sessionEnded: "session_ended";
+}>;
+export interface OutboxRequest {
+  version: 1;
+  /** Unique across all producers in this runtime. Reuse is an error, never an idempotent retry. */
+  requestId: string;
+  extensionId: string;
+  extensionName: string;
+  to: string;
+  workgroup?: string;
+  message: string;
+}
+export interface OutboxResult {
+  version: 1; requestId: string; status: "sent" | "rejected" | "blocked" | "failed";
+  code?: string; detail?: string; extensionId?: string; extensionName?: string;
+  messageId?: string; to?: string; workgroup?: string;
+  delivery?: "socket_delivered" | "queued" | "failed" | "unknown";
+  outcomeKnown?: boolean;
+}
+export interface SessionIdentityRequest {
+  version: 1;
+  /** First valid synchronous claim wins. Calls after emit returns have no effect. Does not change the session name. */
+  claim(id: string): boolean;
+}

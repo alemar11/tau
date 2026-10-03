@@ -17,7 +17,7 @@ export async function piSession(fixture, options = {}) {
   const settings = SettingsManager.inMemory({ compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 100 }, retry: { enabled: false } });
   const loader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings, noSkills: true, noPromptTemplates: true, noContextFiles: true,
     additionalExtensionPaths: options.extensionPaths, additionalThemePaths: options.themePaths,
-    extensionFactories: [(pi) => {
+    extensionFactories: [...(options.beforeFactories ?? []), (pi) => {
       api = pi;
       pi.registerProvider(provider, { api: "openai-completions", baseUrl: "http://127.0.0.1:1/not-used", apiKey: "fixture-not-a-secret",
         models: [{ id: "local", name: "Fixture", reasoning: false, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32000, maxTokens: 1000 }],
@@ -42,7 +42,7 @@ export async function piSession(fixture, options = {}) {
           return stream;
         },
       });
-      installOpenspace(pi, { env, config, onRuntime: (next) => { runtime = next; } });
+      installOpenspace(pi, { env, config, outbox: options.outbox, onRuntime: (next) => { runtime = next; } });
       options.extend?.(pi);
     }, ...(options.factories ?? [])] });
   await loader.reload();

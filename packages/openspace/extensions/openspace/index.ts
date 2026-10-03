@@ -7,16 +7,20 @@ import { registerTools } from "./tools.ts";
 import { registerCommands } from "./commands.ts";
 import { renderMessage } from "./ui/render.ts";
 import { ChannelRegistry } from "./channels.ts";
+import { claimIdentity } from "./identity.ts";
+import { registerOutbox, type OutboxOptions } from "./outbox.ts";
 
 /** Internal injection seam for isolated SDK fixtures; not the public extension bus API. */
 export interface InstallOptions {
   env?: Readonly<NodeJS.ProcessEnv>;
   config?: OpenspaceConfig;
+  outbox?: OutboxOptions;
   onRuntime?: (runtime: PiRuntime) => void;
 }
 export function installOpenspace(pi: ExtensionAPI, options: InstallOptions = {}): void {
   let runtime: PiRuntime | undefined;
   let generation = 0;
+  const removeOutbox = registerOutbox(pi, () => runtime);
   const channels = new ChannelRegistry(pi.events);
   registerTools(pi, () => runtime);
   registerCommands(pi, () => runtime);
@@ -30,13 +34,16 @@ export function installOpenspace(pi: ExtensionAPI, options: InstallOptions = {})
     const config = options.config ?? loadConfig(paths.configPath);
     if (!config.enabled) { channels.disable(); return; }
     if (process.platform !== "darwin" && process.platform !== "linux") throw new Error("Openspace supports macOS and Linux only");
-    runtime = new PiRuntime(pi, ctx, paths, config, loadEnvironment(env));
+    const identity = claimIdentity(pi.events);
+    if (epoch !== generation) return;
+    runtime = new PiRuntime(pi, ctx, paths, config, loadEnvironment(env), { identity, outbox: options.outbox });
     channels.start(runtime.channels); options.onRuntime?.(runtime); runtime.start();
   });
   pi.on("session_shutdown", async (event) => {
     generation++; const previous = runtime; runtime = undefined;
     if (event.reason === "reload" || event.reason === "quit") channels.dispose(); else channels.pause();
-    await previous?.stop();
+    try { await previous?.stop(); }
+    finally { if (event.reason === "quit" || event.reason === "reload") removeOutbox(); }
   });
   const observe = (event: { type: string }, ctx: ExtensionContext) => { runtime?.event(event.type, ctx); };
   pi.on("agent_start", observe);

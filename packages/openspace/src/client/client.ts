@@ -289,14 +289,19 @@ export class OpenspaceClient {
   }
   async resolve(selector: { to?: string; cwd?: string; workgroup?: string }): Promise<{ session: SessionInfo; workgroup: string }> {
     if (!this.isConnected) throw this.terminal ?? new ClientError("disconnected");
-    const generation = this.generation;
+    const generation = this.generation, stamps = this.current!.workgroups.map((group) => this.membership(group));
     const result = await this.request("resolve", selector, { response: "resolved" });
     this.assertGeneration(generation);
+    let info: SessionInfo;
     try {
-      const info = session(result.session);
-      if (typeof result.workgroup !== "string" || !info.workgroups.includes(result.workgroup) || !this.current?.workgroups.includes(result.workgroup)) throw new ClientError("invalid_response");
-      return { session: info, workgroup: result.workgroup };
+      info = session(result.session);
+      if (typeof result.workgroup !== "string" || !info.workgroups.includes(result.workgroup)) throw new ClientError("invalid_response");
     } catch (error) { this.lose(new ClientError("invalid_response")); throw error; }
+    // A valid response can precede a leave acknowledgement in the same input chunk.
+    // That invalidates the selection, not the protocol or unrelated group operations.
+    const stamp = stamps.find((stamp) => stamp.workgroup === result.workgroup);
+    if (!stamp || !this.hasMembership(stamp)) throw new ClientError("workgroup_left");
+    return { session: info, workgroup: result.workgroup as string };
   }
   private async reconcile(): Promise<void> {
     const generation = this.generation;

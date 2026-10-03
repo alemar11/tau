@@ -11,7 +11,7 @@ Requires Node.js 22.19+; developed against Pi 0.99.1. Packages are private by de
 | [codex-fast](packages/codex-fast/README.md) (`tau-codex-fast`) | Fast and ultrafast commands for supported OpenAI models |
 | [calm](packages/calm/README.md) (`calm`) | Quiet transcript presentation with a random animated pixel alien |
 | [orange](packages/orange/README.md) (`tau-orange`) | Orange-accent dark theme and stock footer without estimated cost |
-| [openspace](packages/openspace/README.md) (`openspace`) | Local Pi messaging, terminal UI and extension channels; not yet bundled |
+| [openspace](packages/openspace/README.md) (`openspace`) | Local Pi messaging, terminal UI, extension channels and attributed outbox; not yet bundled |
 | [web](packages/web/README.md) (`web`) | Web search, page/PDF reading, and branch-scoped cache |
 | [subagents](packages/subagents/README.md) (`subagents`) | Native Pi delegation, workflows, supervision and FIFO writer admission |
 
@@ -100,7 +100,7 @@ tau/
 └── packages/
     ├── calm/                 # quiet transcript extension and tests
     ├── orange/               # orange theme and cost-free footer
-    ├── openspace/            # local Pi messaging, terminal UI and extension channels
+    ├── openspace/            # local Pi messaging, UI, channels and attributed outbox
     ├── web/                  # search, document extraction, and cache
     ├── subagents/            # native delegation, workflows, supervision, and tests
     └── codex-fast/
