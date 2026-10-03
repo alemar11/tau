@@ -250,6 +250,9 @@ export class OpenspaceClient {
         const receipt = value.receipt as Record<string, unknown> | undefined;
         if (!receipt || !RECEIPTS.includes(receipt.status as never) || !Number.isSafeInteger(receipt.timestamp)) throw new ClientError("invalid_response");
         parseRef(receipt.ref);
+      } else if (value.type === "ask_closed") {
+        parseRef(value.ref);
+        if (typeof value.code !== "string" || !/^[a-z_]{1,64}$/.test(value.code)) throw new ClientError("invalid_response");
       } else if (value.type === "message_control") {
         parseRef(value.ref);
         if (value.action !== "cancelled" && value.action !== "superseded") throw new ClientError("invalid_response");

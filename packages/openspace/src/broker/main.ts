@@ -1,3 +1,4 @@
+import { loadEnvironment } from "../config.ts";
 import { dirname, resolve } from "node:path";
 import { resolvePaths } from "../paths.ts";
 import { startBroker, type Broker } from "./server.ts";
@@ -17,7 +18,8 @@ try {
   if (paths.runtimeDir !== resolve(directory)) throw new Error("Runtime directory must be named openspace");
   prepareRuntime(paths);
   process.chdir(paths.runtimeDir);
-  broker = await startBroker(paths);
+  const timeoutMs = loadEnvironment({ PI_OPENSPACE_ASK_TIMEOUT_MS: process.env.PI_OPENSPACE_ASK_TIMEOUT_MS }).askTimeoutMs;
+  broker = await startBroker(paths, { asks: { timeoutMs } });
   if (stopping) await broker.stop();
   await broker.closed;
 } catch (error) {

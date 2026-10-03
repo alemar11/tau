@@ -1,10 +1,10 @@
 # Invio locale — protocollo interno
 
-`Messenger` (`src/client/messenger.ts`) aggiunge invio, ricevute e controlli al client core. Non importa Pi, non legge file allegati e non avvia processi. L'adapter Pi, ask/reply e la CLI vengono collegati nei rispettivi step successivi.
+`Messenger` (`src/client/messenger.ts`) aggiunge invio, ricevute e controlli al client core. Non importa Pi, non legge file allegati e non avvia processi. L'adapter Pi e [ask/reply](ASKS.md) usano questo trasporto; la CLI è il passo successivo dedicato.
 
 ## Destinazione e invio
 
-`resolve({to?, cwd?, workgroup?})` sceglie una destinazione esatta, anche recentemente disconnessa, un solo gruppo e gli epoch di membership del mittente/destinatario. Restano le regole del registry: zero gruppi comuni → errore, più gruppi → scelta esplicita, niente fallback al primo peer o a un altro gruppo. Un nome live ha precedenza sui vecchi record offline omonimi; l'ID esatto resta prioritario. Gli alias runtime non sono identità trasferibili.
+`resolve({to?, cwd?, workgroup?})` sceglie una destinazione esatta, anche recentemente disconnessa, un solo gruppo e gli epoch di membership del mittente/destinatario. Restano le regole del registry: zero gruppi comuni → errore, più gruppi → scelta esplicita, niente fallback al primo peer o a un altro gruppo. L'ID esatto resta prioritario; nomi omonimi live/offline rimangono ambigui, salvo un filtro cwd che li distingua. Gli alias runtime non sono identità trasferibili.
 
 `send(to, {text, messageId?, workgroup?, cwd?, attachments?, supersedes?, retryOf?, provenance?, signal?})` restituisce un `DeliveryResult`. `sendResolved` mantiene una selezione già fatta, utile per conferma/compose. Il messageId esplicito è conservato; altrimenti viene generato un UUID. Le mutazioni del payload del caller durante lookup non cambiano il testo inviato.
 
@@ -40,12 +40,12 @@ Disconnect normale non è uscita. Uscita esplicita, revoca/cambio di ownership p
 
 ## Ricevute e controlli
 
-`subscribe` espone message, receipt e control. `receipt(ref, status, code?)` è ammessa solo per il destinatario effettivo e la sua membership corrente. Ref = `{workgroup, senderId, messageId}`; nessun indice globale per il solo messageId.
+`subscribe` espone message, receipt, control e ask_closed. `receipt(ref, status, code?)` è ammessa solo per il destinatario effettivo e la sua membership corrente. Ref = `{workgroup, senderId, messageId}`; nessun indice globale per il solo messageId.
 
 Status: receiver_received, acknowledged, queued, injected, expired, cancelled, superseded, cancellation_requested. Sono diagnostici, non una progressione monotona: acknowledged può precedere queued. Una injection già osservata non viene trasformata in "lavoro cancellato": successive ricevute cancelled/superseded/expired diventano cancellation_requested.
 
-`cancel(ref)` è riservato al mittente originario corrente. In mailbox rimuove davvero la consegna; dopo write invia un controllo al receiver e risponde cancellation_requested. Il receiver dello step Pi distinguerà held da già injected. Controlli pendenti vengono riproposti al receiver sul resume entro la retention, senza replay del messaggio. Supersedes richiede stesso mittente, gruppo e destinatario effettivo; retryOf è soltanto un collegamento a un nuovo tentativo esplicito.
+`cancel(ref)` è riservato al mittente originario corrente. In mailbox rimuove davvero la consegna; dopo write invia un controllo al receiver e risponde cancellation_requested. Il receiver Pi distingue held da già injected. Controlli pendenti vengono riproposti al receiver sul resume entro la retention, senza replay del messaggio. Supersedes richiede stesso mittente, gruppo e destinatario effettivo; retryOf è soltanto un collegamento a un nuovo tentativo esplicito.
 
-ReplyTo ed expectsReply sono rifiutati fino all'implementazione e negoziazione di ask/reply. Non esiste ancora una correlazione valida da inventare in questo step.
+ReplyTo ed expectsReply sono validati dal servizio ask del broker: destinatario live per le nuove domande, relazione originaria e membership valide per le risposte. Nessuna reply arbitraria o deadline negoziata; vedere [ASKS](ASKS.md).
 
-Features broker: `delivery-v1` e `exact-send-v1`, oltre a liveness/registry/lease-resume. Le notifiche e i controlli non avviano modelli: questa responsabilità appartiene all'adapter Pi.
+Features broker: `delivery-v1`, `exact-send-v1` e `ask-reply-v1`, oltre a liveness/registry/lease-resume. Le notifiche e i controlli non avviano modelli: questa responsabilità appartiene all'adapter Pi.

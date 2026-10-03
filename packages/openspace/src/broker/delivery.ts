@@ -1,3 +1,4 @@
+import type { AskService } from "./asks.ts";
 import { envelope } from "../protocol/messages.ts";
 import { checkMessageFrame, fingerprint, parseBody, parseRef, RECEIPTS, refKey,
   type DeliveryResult, type Message, type MessageRef, type Receipt, type ReceiptStatus } from "../protocol/delivery.ts";
@@ -23,8 +24,9 @@ export class DeliveryService {
   private readonly forward: Forward;
   private readonly now: () => number;
   private readonly limits: typeof DELIVERY_LIMITS;
-  constructor(registry: SessionRegistry, forward: Forward, options: DeliveryOptions = {}) {
-    this.registry = registry; this.forward = forward; this.now = options.now ?? Date.now;
+  private readonly asks: AskService;
+  constructor(registry: SessionRegistry, forward: Forward, asks: AskService, options: DeliveryOptions = {}) {
+    this.registry = registry; this.forward = forward; this.asks = asks; this.now = options.now ?? Date.now;
     this.limits = { ...DELIVERY_LIMITS, ...options.limits };
     for (const value of Object.values(this.limits)) if (!Number.isSafeInteger(value) || value < 1) throw new Error("Invalid delivery limit");
   }
@@ -41,6 +43,7 @@ export class DeliveryService {
     record.terminalStatus = status;
     record.replayUntil = this.now() + this.limits.replayMs;
     this.notify(record, status, code);
+    this.asks.close(record.ref, `ask_delivery_${status}`);
   }
   prune(): void {
     const now = this.now();
@@ -83,7 +86,6 @@ export class DeliveryService {
     this.prune();
     if (!object(input) || typeof input.to !== "string" || typeof input.workgroup !== "string" || typeof input.endpointEpoch !== "string" || typeof input.senderMembershipEpoch !== "string" || typeof input.membershipEpoch !== "string") throw new RegistryError("invalid_message");
     const sender = this.registry.session(endpoint), body = parseBody(input.message);
-    if (body.replyTo || body.expectsReply) throw new RegistryError("reply_not_supported");
     if (sender.id === input.to) throw new RegistryError("self_target");
     const ref: MessageRef = { workgroup: input.workgroup, senderId: sender.id, messageId: body.id };
     const hash = fingerprint(body, input.to, input.workgroup);
@@ -115,12 +117,17 @@ export class DeliveryService {
     record.metadataBytes = this.metadataSize(record);
     // Preflight before evicting or writing; a live socket can close before forwarding.
     if (Buffer.byteLength(JSON.stringify(message)) > this.limits.mailboxBytes) throw new RegistryError("mailbox_capacity");
+    const commitAsk = this.asks.prepare(body, senderStamp, receiverStamp);
     this.reserve(record.metadataBytes);
-    this.records.set(refKey(ref), record);
+    commitAsk(); this.records.set(refKey(ref), record);
     const targetEndpoint = this.registry.endpoint(target.id);
     const forwarded = targetEndpoint ? this.forward(targetEndpoint, { ...envelope("message"), message }) : "offline";
-    if (forwarded === "offline") this.queue(record, message);
+    if (forwarded === "offline" && body.expectsReply) {
+      record.result = { ...record.result, delivery: "failed", code: "target_disconnected" }; record.terminal = true;
+      this.asks.close(ref, "target_disconnected");
+    } else if (forwarded === "offline") this.queue(record, message);
     else if (forwarded === "unknown") record.result = { ...record.result, delivery: "unknown", code: "socket_write_failed", outcomeKnown: false };
+    if (body.replyTo && ["socket_delivered", "queued"].includes(record.result.delivery)) this.asks.close(body.replyTo, "answered");
     if (superseded && record.result.delivery !== "unknown") this.cancelRecord(superseded, "superseded", body.id);
     return structuredClone(record.result);
   }
@@ -137,6 +144,7 @@ export class DeliveryService {
   }
   private cancelRecord(record: RecordEntry, reason: "cancelled" | "superseded", replacement?: string): ReceiptStatus {
     if (record.terminal) return record.terminalStatus ?? record.control ?? "cancelled";
+    this.asks.close(record.ref, reason === "cancelled" ? "ask_cancelled" : "ask_superseded");
     record.control = reason; record.replacement = replacement;
     if (record.queued) { this.terminal(record, reason, reason); return reason; }
     const endpoint = this.registry.endpoint(record.actualRecipientId);

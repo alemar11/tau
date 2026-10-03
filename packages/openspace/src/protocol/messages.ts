@@ -1,6 +1,6 @@
 import { OPENSPACE_NAMESPACE, OPENSPACE_PROTOCOL_VERSION } from "../constants.ts";
 
-export const FEATURES = ["liveness-v1", "session-registry-v1", "lease-resume-v1", "delivery-v1", "exact-send-v1"] as const;
+export const FEATURES = ["liveness-v1", "session-registry-v1", "lease-resume-v1", "delivery-v1", "exact-send-v1", "ask-reply-v1"] as const;
 export const MAX_REQUEST_ID_BYTES = 256;
 
 export function envelope(type: string, requestId?: string) {
@@ -46,7 +46,7 @@ export function parseRequest(value: unknown): Request {
     health: [], ping: [], release: [], prepare: ["id"], register: ["session", "workgroups", "lease", "mode"],
     list: ["workgroup"], "list-cwd": ["cwd", "workgroup"], resolve: ["to", "cwd", "workgroup"],
     "resolve-send": ["to", "cwd", "workgroup"],
-    send: ["to", "endpointEpoch", "membershipEpoch", "senderMembershipEpoch", "workgroup", "message"], receipt: ["receipt"], cancel: ["ref"],
+    send: ["to", "endpointEpoch", "membershipEpoch", "senderMembershipEpoch", "workgroup", "message"], receipt: ["receipt"], cancel: ["ref"], "abandon-ask": ["ref"],
     update: ["expectedRevision", "patch"], "set-workgroups": ["expectedRevision", "workgroups"],
   };
   const operation = Object.hasOwn(fields, value.type) ? fields[value.type] : undefined;

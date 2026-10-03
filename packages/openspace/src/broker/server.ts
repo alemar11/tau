@@ -11,6 +11,7 @@ import { project, RegistryError, type SessionInfo } from "../registry/session.ts
 import { acquireClaim, identity, prepareRuntime, privateSocket, sameFile, unlinkOwned } from "./runtime-files.ts";
 import { probeBroker } from "./probe.ts";
 import { DeliveryService, type DeliveryOptions } from "./delivery.ts";
+import { AskService, type AskOptions } from "./asks.ts";
 
 import { systemClock, type Clock } from "../clock.ts";
 export { systemClock, type Clock } from "../clock.ts";
@@ -18,7 +19,7 @@ export const BROKER_LIMITS = {
   idleMs: 5_000, registrationMs: 1_000, unregistered: 32, registered: 128,
   rateCapacity: 240, ratePerSecond: 120, outputBytes: MAX_OUTPUT_BYTES,
 };
-export interface BrokerOptions { clock?: Clock; limits?: Partial<typeof BROKER_LIMITS>; leases?: LeaseOptions; delivery?: DeliveryOptions }
+export interface BrokerOptions { clock?: Clock; limits?: Partial<typeof BROKER_LIMITS>; leases?: LeaseOptions; delivery?: DeliveryOptions; asks?: AskOptions }
 export interface Broker { readonly instanceId: string; readonly closed: Promise<void>; stop(): Promise<void> }
 interface Peer { socket: Socket; active: boolean; close(): void; reject(code: string, requestId?: string): void }
 
@@ -37,6 +38,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
   const peers = new Map<string, Peer>();
   let registry: SessionRegistry;
   let delivery: DeliveryService;
+  let asks: AskService;
   let unregistered = 0;
   let cancelIdle: (() => void) | undefined;
   let cancelCheckpoint: (() => void) | undefined;
@@ -85,7 +87,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
           change.after ? project(viewer, change.after) : undefined);
       }
     }
-    delivery.transition(change);
+    asks.prune(); delivery.transition(change);
   }
   const server = createServer((socket) => {
     socket.on("error", () => socket.destroy());
@@ -177,6 +179,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
                 case "send": send({ ...envelope("delivery_result", request.requestId), result: delivery.send(endpoint, request) }); break;
                 case "receipt": send({ ...envelope("receipt_result", request.requestId), receipt: delivery.receipt(endpoint, request.receipt) }); break;
                 case "cancel": send({ ...envelope("control_result", request.requestId), ...delivery.cancel(endpoint, request.ref) }); break;
+                case "abandon-ask": asks.abandon(endpoint, request.ref); send(envelope("ask_abandoned", request.requestId)); break;
                 case "update": mutation = registry.update(endpoint, request.expectedRevision, request.patch); break;
                 case "set-workgroups": mutation = registry.setWorkgroups(endpoint, request.expectedRevision, request.workgroups); break;
                 default: send({ ...envelope("error", request.requestId), code: "unsupported_operation" });
@@ -214,8 +217,8 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
   }
   function maintainDelivery() {
     if (stopping) return;
-    delivery.prune();
-    cancelDelivery = clock.after(Math.min(60_000, options.delivery?.limits?.mailboxMs ?? 60_000, options.delivery?.limits?.replayMs ?? 60_000), maintainDelivery);
+    asks.prune(); delivery.prune();
+    cancelDelivery = clock.after(Math.min(60_000, asks.timeoutMs, options.delivery?.limits?.mailboxMs ?? 60_000, options.delivery?.limits?.replayMs ?? 60_000), maintainDelivery);
   }
   function cleanup() {
     try {
@@ -234,7 +237,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
     stopping = true;
     cancelIdle?.();
     cancelCheckpoint?.();
-    cancelDelivery?.();
+    cancelDelivery?.(); asks?.stop();
     for (const peer of peers.values()) peer.socket.destroy();
     if (server.listening) server.close(cleanup);
     else cleanup();
@@ -258,7 +261,8 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
       if (old && lstatSync(previousSocket).isSocket()) unlinkOwned(previousSocket, old);
     }
     registry = new SessionRegistry(new LeaseStore(paths.runtimeDir, options.leases), paths.runtimeDir, options.leases?.now, limits.registered);
-    delivery = new DeliveryService(registry, forward, options.delivery);
+    asks = new AskService(registry, forward, paths.runtimeDir, options.asks);
+    delivery = new DeliveryService(registry, forward, asks, options.delivery);
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(ownedSocket, () => { server.off("error", reject); resolve(); });

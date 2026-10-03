@@ -4,9 +4,9 @@ Package Pi autonomo per la comunicazione locale fra sessioni. Nome npm `openspac
 
 ## Stato effettivo
 
-Implementati i passi **01–06**: broker Unix, registry, recovery, delivery e adapter Pi. Il tool `openspace` permette list/list-cwd/status/send/cancel e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
+Implementati i passi **01–07**: broker Unix, registry, recovery, delivery e adapter Pi. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
 
-**Ask/reply, UI di composizione, comandi workgroup, API estensioni, CLI operativa e handover non sono ancora disponibili.** Il servizio interno di preferenze per sessione è pronto per i comandi. Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
+**UI di composizione, comandi workgroup, API estensioni, CLI operativa e handover non sono ancora disponibili.** Il servizio interno di preferenze per sessione è pronto per i comandi. Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -69,7 +69,7 @@ Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = 
 | --- | --- |
 | `PI_OPENSPACE_STABLE_ID` | Override non vuoto normalizzato dell'ID di routing |
 | `PI_OPENSPACE_WORKGROUPS` | Lista specifica separata da virgole; assente/vuota → fallback `default` |
-| `PI_OPENSPACE_ASK_TIMEOUT_MS` | 600000 ms; sarà letto indipendentemente dai processi interessati |
+| `PI_OPENSPACE_ASK_TIMEOUT_MS` | 600000 ms; letto indipendentemente da waiter, receiver e processo broker |
 | `PI_OPENSPACE_LIVENESS_INTERVAL_MS` | 30000 ms |
 | `PI_OPENSPACE_LIVENESS_TIMEOUT_MS` | 5000 ms, limitato all'intervallo configurato |
 
@@ -108,7 +108,7 @@ Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `request
 - `health` → `health_result`, stesso requestId, versione, PID, instanceId e features; nessun dato di sessione o credenziale.
 - `prepare {id}` → ticket di lease; `register` con lease, mode claim/resume, session e gruppi specifici → `registered` con record completo (massimo **6 KiB**). La lease resta valida per resume soltanto mentre il broker conserva quella ownership.
 - `list`, `list-cwd`, `resolve`, `update`, `set-workgroups`, `release`: registry e mutazioni correlate, con proiezione dei gruppi visibili e revisioni CAS.
-- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`, `delivery-v1`, `exact-send-v1`; ask e bus estensioni non vengono pubblicizzati.
+- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`, `delivery-v1`, `exact-send-v1`, `ask-reply-v1`; il bus estensioni non viene ancora pubblicizzato.
 
 Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il controller core ferma retry e reconnect impliciti dopo il rifiuto; l'adapter avvisa e lascia proseguire Pi, senza reclamare nuovamente l'ID.
 
@@ -134,7 +134,7 @@ Le mutazioni usano revisioni CAS, coda seriale e riconciliazione dopo un esito i
 
 Il tool `openspace` ha schema stabile e risultati `content`/`details`; errori e risultati incerti sono marcati `isError`. `send` conserva `messageId`, `supersedes` e `retryOf`; gli allegati trasportano testo, non letture remote. `confirmSend` richiede conferma TUI/RPC; senza dialoghi disponibili l'invio è bloccato. Cancel richiede `messageId` e il `workgroup` originario.
 
-- Idle: `always` avvia un turno; `never` appende senza avvio. `replies` per ora non avvia: la correlazione reply arriva nel passo 07.
+- Idle: `always` avvia un turno; `never` appende senza avvio. `replies` avvia soltanto per una reply con correlazione validata dal broker, non già consumata dal waiter.
 - Run TUI: `steer` usa la coda Pi, **anche con `inboundTrigger: never`**. Questa opzione non è un firewall.
 - `human-first`: FIFO esterna, al massimo un peer per turno, soltanto senza input umano pendente; non scarica l'intera coda quando torna idle. Input continuo può ritardare i peer fino alla scadenza.
 - Compattazione o busy senza run: hold fino a un confine sicuro; controllo ogni 250 ms soltanto mentre ci sono held, anche se manca una notifica finale.
@@ -142,7 +142,11 @@ Il tool `openspace` ha schema stabile e risultati `content`/`details`; errori e 
 
 Held: **256 messaggi / 8 MiB / 10 minuti**. Dedupe: **1000 record / 1 ora**, chiave workgroup+sender+ID. Overflow/scadenza producono ricevute diagnostiche. `injected` significa passato all'API Pi, non risposta o completamento del modello. Cancel/supersede/uscita da un gruppo rimuovono soltanto contenuti ancora posseduti da Openspace; history e code già consegnate a Pi non vengono modificate. Leave/rejoin non riabilita callback vecchie; disconnect ordinario non è leave. Shutdown scade gli held e invalida timer, conferme e callback.
 
-Il custom message `openspace_message` conserva dettagli, gruppo, provenienza e allegati. Pi lo converte in contenuto user-role attribuito al peer, non in istruzioni di sistema o input umano. La history diagnostica degli invii è `openspace_sent`. Dedupe/held non vengono ricreati da history dopo reload. `replyHint` diventerà operativo con ask/reply.
+Il custom message `openspace_message` conserva dettagli, gruppo, provenienza e allegati. Pi lo converte in contenuto user-role attribuito al peer, non in istruzioni di sistema o input umano. La history diagnostica degli invii è `openspace_sent`. Dedupe/held non vengono ricreati da history dopo reload. `replyHint` mostra il riferimento di una domanda ancora pendente.
+
+## Ask e reply
+
+Il [contratto ask/reply](ASKS.md) descrive waiter single-flight, selezione pending, inferenza send, validazione broker, timeout indipendenti e diagnostica non durevole. Ask richiede un peer live; la risposta con allegati ritorna nello stesso risultato tool. Timeout non cancella il lavoro, abort del waiter non equivale a cancel del messaggio e le reply non cambiano gruppo.
 
 ## Verifiche
 
@@ -154,6 +158,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply resta da verificare nel passo successivo.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

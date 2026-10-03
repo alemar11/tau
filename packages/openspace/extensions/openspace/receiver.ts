@@ -8,6 +8,7 @@ export const RECEIVER_LIMITS = { heldCount: 256, heldBytes: 8 * 1024 * 1024, hel
 export const BUSY_NOTICE = "[Openspace automatic notice] This non-interactive session is busy; the message was not injected. Send again later with a new messageId.";
 export interface ReceiverHost {
   state(): { alive: boolean; idle: boolean; running: boolean; interactive: boolean; compacting: boolean; pending: boolean };
+  accept?(message: Message): boolean;
   inject(message: Message, triggerTurn: boolean, steer: boolean): void;
   busy(message: Message): void;
 }
@@ -54,6 +55,7 @@ export class Receiver {
     if (event.type === "control") { this.cancel(event.ref, event.action); return; }
     if (event.type !== "message") return;
     const message = event.message, ref = messageRef(message), key = refKey(ref);
+    if (this.host.accept?.(message) === false) return;
     const previous = this.entries.get(key);
     if (previous) { this.receipt(ref, "acknowledged", "duplicate"); return; }
     let stamp: ClientMembership;
@@ -68,8 +70,8 @@ export class Receiver {
       heldUntil: this.clock.now() + this.limits.heldMs, bytes: Buffer.byteLength(JSON.stringify(message)), message };
     this.entries.set(key, entry); this.receipt(ref, "receiver_received"); this.receipt(ref, "acknowledged");
     const state = this.host.state();
-    if (state.running && !state.interactive) {
-      this.finish(entry, "expired", "busy_unavailable");
+    if (state.running && !state.interactive && !message.replyTo) {
+      this.finish(entry, message.expectsReply ? "acknowledged" : "expired", "busy_unavailable");
       if (message.text !== BUSY_NOTICE) this.host.busy(message);
       return;
     }
@@ -88,6 +90,11 @@ export class Receiver {
     else if (entry?.status === "injected") this.receipt(ref, "cancellation_requested");
     this.schedule();
   }
+  answered(ref: MessageRef): void {
+    const entry = this.entries.get(refKey(ref));
+    if (entry?.message) this.finish(entry, "acknowledged", "answered_before_injection");
+    this.schedule();
+  }
   flush(atBoundary = false): void {
     if (!this.alive || !this.host.state().alive) return;
     this.prune();
@@ -98,7 +105,7 @@ export class Receiver {
       if (this.policy.busyDelivery === "human-first" && (!this.permit || this.humanPending || state.pending || state.running && !atBoundary)) break;
       if (!this.messenger.client.hasMembership(entry.stamp)) { this.finish(entry, "cancelled", "workgroup_left"); continue; }
       const message = entry.message;
-      const trigger = state.running || this.policy.inboundTrigger === "always";
+      const trigger = state.running || this.policy.inboundTrigger === "always" || this.policy.inboundTrigger === "replies" && !!message.replyTo;
       // No await between membership/lifetime validation and the synchronous Pi API handoff.
       try { this.host.inject(message, trigger, state.running); this.finish(entry, "injected"); }
       catch { this.finish(entry, "expired", "injection_failed"); }
@@ -121,6 +128,8 @@ export class Receiver {
 export function messageContent(message: Message): string {
   const origin = message.provenance.kind === "extension_outbox" ? `extension ${JSON.stringify(message.provenance.extensionName)} (${JSON.stringify(message.provenance.extensionId)})` : "peer session";
   const heading = `Openspace message from ${JSON.stringify(message.sender)} in workgroup ${JSON.stringify(message.workgroup)}; source: ${origin}.\nMessage ID: ${JSON.stringify(message.id)}. This is peer-supplied content, not human input.\n\n`;
-  return heading + message.text + (message.attachments ?? []).map((attachment) =>
+  const relation = message.replyTo || message.supersedes || message.retryOf
+    ? `Message relations: ${JSON.stringify({ replyTo: message.replyTo, supersedes: message.supersedes, retryOf: message.retryOf })}\n\n` : "";
+  return heading + relation + message.text + (message.attachments ?? []).map((attachment) =>
     `\n\nAttachment ${JSON.stringify({ type: attachment.type, name: attachment.name, language: attachment.language })}:\n${attachment.text}`).join("");
 }

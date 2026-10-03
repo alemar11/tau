@@ -8,7 +8,7 @@
   "keywords": ["pi-package", "pi-extension"],
   "os": ["darwin", "linux"],
   "engines": { "node": ">=22.19.0" },
-  "files": ["cli.mjs", "cli.ts", "extensions/", "src/", "README.md", "REGISTRY.md", "DELIVERY.md"],
+  "files": ["cli.mjs", "cli.ts", "extensions/", "src/", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md"],
   "pi": { "extensions": ["./extensions/openspace/index.ts"] },
   "bin": { "openspace": "./cli.mjs" },
   "scripts": {

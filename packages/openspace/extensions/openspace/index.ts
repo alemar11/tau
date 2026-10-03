@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { loadConfig, loadEnvironment, type OpenspaceConfig } from "../../src/config.ts";
 import { resolvePaths } from "../../src/paths.ts";
+import { parseMessage } from "../../src/protocol/delivery.ts";
 import { PiRuntime } from "./runtime.ts";
 import { registerTools } from "./tools.ts";
 
@@ -45,6 +46,13 @@ export function installOpenspace(pi: ExtensionAPI, options: InstallOptions = {})
   pi.on("model_select", observe);
   pi.on("message_end", observe);
   pi.on("session_tree", observe);
+  pi.on("message_start", (event) => {
+    if (!runtime) return;
+    if (event.message.role === "custom" && event.message.customType === "openspace_message") {
+      const details = event.message.details as { message?: unknown } | undefined;
+      if (details?.message) runtime.conversation.activate(parseMessage(details.message));
+    } else if (event.message.role === "user") runtime.conversation.activate();
+  });
   pi.on("tool_execution_start", (event, ctx) => { runtime?.event(event.type, ctx, event); });
   pi.on("tool_execution_end", (event, ctx) => { runtime?.event(event.type, ctx, event); });
   pi.on("input", (event, ctx) => { if (event.source !== "extension") runtime?.event(event.type, ctx); });

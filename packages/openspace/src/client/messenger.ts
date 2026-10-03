@@ -30,6 +30,7 @@ export interface SendOptions {
   signal?: AbortSignal;
 }
 export type MessageEvent = { type: "message"; message: Message } | { type: "receipt"; receipt: Receipt }
+  | { type: "ask_closed"; ref: MessageRef; code: string }
   | { type: "control"; ref: MessageRef; action: "cancelled" | "superseded"; replacement?: string };
 
 export class Messenger {
@@ -45,6 +46,7 @@ export class Messenger {
       let notification: MessageEvent | undefined;
       if (value.type === "message") notification = { type: "message", message: parseMessage(value.message) };
       else if (value.type === "receipt") notification = { type: "receipt", receipt: structuredClone(value.receipt) as Receipt };
+      else if (value.type === "ask_closed") notification = { type: "ask_closed", ref: parseRef(value.ref), code: value.code as string };
       else if (value.type === "message_control") notification = { type: "control", ref: parseRef(value.ref), action: value.action as "cancelled" | "superseded",
         ...(typeof value.replacement === "string" ? { replacement: value.replacement } : {}) };
       if (notification) for (const listener of this.listeners) {

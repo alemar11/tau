@@ -24,12 +24,14 @@ export async function piSession(fixture, options = {}) {
           const stream = createAssistantMessageEventStream();
           const output = { role: "assistant", api: model.api, provider: model.provider, model: model.id, content: [{ type: "text", text: "fixture complete" }],
             usage: { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 12, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: "stop", timestamp: Date.now() };
+          const call = gate.calls?.shift();
+          if (call) { output.content = [{ type: "toolCall", ...call }]; output.stopReason = "toolUse"; }
           let done = false;
           const release = () => {
             if (done) return; done = true; options?.signal?.removeEventListener("abort", abort);
             stream.push({ type: "start", partial: output });
             if (gate.fail) stream.push({ type: "error", reason: "error", error: { ...output, stopReason: "error", errorMessage: "fixture provider failure" } });
-            else stream.push({ type: "done", reason: "stop", message: output });
+            else stream.push({ type: "done", reason: output.stopReason, message: output });
             stream.end();
           };
           const abort = () => { if (done) return; done = true; stream.push({ type: "error", reason: "aborted", error: { ...output, stopReason: "aborted" } }); stream.end(); };

@@ -2,6 +2,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { OpenspaceClient, ClientError } from "../../src/client/client.ts";
 import { ConnectionController } from "../../src/client/controller.ts";
+import { Conversation } from "../../src/client/conversation.ts";
+import { messageRef, type MessageRef } from "../../src/protocol/delivery.ts";
 import { Messenger, type SendOptions } from "../../src/client/messenger.ts";
 import { ensureBroker } from "../../src/broker/spawn.ts";
 import type { OpenspaceConfig, OpenspaceEnvironment } from "../../src/config.ts";
@@ -15,6 +17,7 @@ export class PiRuntime {
   readonly client: OpenspaceClient;
   readonly controller: ConnectionController;
   readonly messenger: Messenger;
+  readonly conversation: Conversation;
   readonly receiver: Receiver;
   readonly preferences: WorkgroupPreferences;
   readonly config: OpenspaceConfig;
@@ -39,7 +42,10 @@ export class PiRuntime {
       workgroups: restoredWorkgroups(ctx, environment.workgroups), heartbeatMs: environment.livenessIntervalMs, heartbeatTimeoutMs: environment.livenessTimeoutMs });
     this.controller = new ConnectionController({ client: this.client, ensureBroker: () => ensureBroker(paths, config), onWarning: (error) => this.warn(error) });
     this.messenger = new Messenger(this.client);
+    this.conversation = new Conversation(this.messenger, { timeoutMs: environment.askTimeoutMs, trackerTimeoutMs: environment.askTimeoutMs,
+      onAnswered: (ref) => this.receiver.answered(ref) });
     this.receiver = new Receiver(this.messenger, {
+      accept: (message) => this.conversation.accept(message),
       state: () => {
         // Some cancelled compactions have no completion notification. Pi's authoritative idle state closes that gap.
         if (this.ctx.isIdle()) this.compacting = false;
@@ -48,7 +54,7 @@ export class PiRuntime {
       },
       inject: (message, triggerTurn, steer) => {
         this.assertCurrent();
-        this.pi.sendMessage({ customType: "openspace_message", display: true, content: messageContent(message),
+        this.pi.sendMessage({ customType: "openspace_message", display: true, content: messageContent(message) + (message.expectsReply && this.config.replyHint && this.conversation.tracker.has(messageRef(message)) ? `\n\nUse openspace action reply with replyTo ${JSON.stringify(messageRef(message))} to answer this ask.` : ""),
           details: { direction: "received", message, injectedAt: Date.now() } }, { triggerTurn, ...(steer ? { deliverAs: "steer" } : {}) });
       },
       busy: (message) => this.busy(message),
@@ -113,6 +119,7 @@ export class PiRuntime {
     if (type === "agent_start") this.running = true;
     // agent_end is not settlement: prohibit idle injection until Pi reports an actually safe boundary.
     if (type === "agent_end" || type === "agent_settled") { this.running = false; this.tools.clear(); }
+    if (type === "agent_settled") this.conversation.activate();
     if (type === "session_before_compact") this.compacting = true;
     if (type === "session_compact" || type === "session_compact_failed") this.compacting = false;
     if (type === "tool_execution_start" && data?.toolCallId && data.toolName) this.tools.set(data.toolCallId, data.toolName);
@@ -123,11 +130,25 @@ export class PiRuntime {
     if (["turn_end", "agent_settled", "session_compact", "session_compact_failed"].includes(type)) this.receiver.flush(true);
   }
   private busy(message: Message): void {
-    void this.messenger.send(message.sender.id, { text: BUSY_NOTICE, workgroup: message.workgroup, signal: this.signal });
+    if (message.expectsReply) void this.conversation.reply({ replyTo: messageRef(message) }, { text: BUSY_NOTICE, signal: this.signal }).catch(() => {});
+    else void this.messenger.send(message.sender.id, { text: BUSY_NOTICE, workgroup: message.workgroup, signal: this.signal });
+  }
+  async ask(to: string | undefined, options: SendOptions) {
+    await this.ready(); this.assertCurrent();
+    return this.conversation.ask(to, { ...options, signal: options.signal ? AbortSignal.any([options.signal, this.signal]) : this.signal });
+  }
+  async reply(selector: { replyTo?: MessageRef; to?: string; workgroup?: string }, options: SendOptions) {
+    await this.ready(); this.assertCurrent();
+    return this.conversation.reply(selector, { ...options, signal: options.signal ? AbortSignal.any([options.signal, this.signal]) : this.signal });
   }
   async send(to: string | undefined, options: SendOptions, confirm = this.config.confirmSend) {
+    const { signal: callerSignal, ...payload } = options; options = { ...structuredClone(payload), signal: callerSignal };
     await this.ready(); this.assertCurrent();
-    const selected = await this.messenger.resolve({ to, cwd: options.cwd, workgroup: options.workgroup }); this.assertCurrent();
+    if (options.replyTo) return this.reply({ replyTo: options.replyTo, to, workgroup: options.workgroup }, options);
+    const inferred = this.conversation.infer(to, options.workgroup);
+    const selected = await this.messenger.resolve({ to, cwd: options.cwd, workgroup: options.workgroup ?? inferred?.workgroup }); this.assertCurrent();
+    const original = inferred?.sender.id === selected.session.id ? inferred : this.conversation.infer(selected.session.id, selected.workgroup);
+    if (!original) this.conversation.guardSend(selected.session.id);
     const signal = options.signal ? AbortSignal.any([options.signal, this.signal]) : this.signal;
     if (confirm) {
       if (!this.ctx.hasUI) throw new ClientError("confirmation_unavailable");
@@ -136,7 +157,9 @@ export class PiRuntime {
       if (!approved) throw new ClientError("confirmation_cancelled");
     }
     if (signal.aborted) throw new ClientError("aborted");
-    const result = await this.messenger.sendResolved(selected, { ...options, signal }); this.assertCurrent();
+    if (!this.client.hasMembership(selected.stamp)) throw new ClientError("workgroup_left");
+    const result = original ? await this.conversation.reply({ replyTo: messageRef(original) }, { ...options, cwd: undefined, signal })
+      : await this.messenger.sendResolved(selected, { ...options, signal }); this.assertCurrent();
     // Diagnostic history is not an extra context message and cannot turn a successful transport write into a failed send.
     if (!this.compacting) {
       try { this.pi.appendEntry("openspace_sent", { to: selected.session.id, result, text: options.text, attachments: options.attachments }); }
@@ -153,7 +176,7 @@ export class PiRuntime {
   }
   async stop(): Promise<void> {
     if (!this.alive) return;
-    this.alive = false; this.lifetime.abort(); this.unsubscribe(); this.receiver.stop(); this.messenger.dispose();
+    this.alive = false; this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.receiver.stop(); this.messenger.dispose();
     await this.controller.stop();
   }
 }

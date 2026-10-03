@@ -38,7 +38,7 @@ test("explicit IDs, Unicode attachments and transport-only results survive exact
   const replay = await a.messenger.send("b", payload); assert.deepEqual(replay, result); assert.equal(b.messages().length, 1);
   assert.equal((await a.messenger.send("b", { ...payload, text: "changed" })).code, "E_MESSAGE_ID_REUSE");
   assert.equal((await a.messenger.send("a", { text: "self" })).code, "self_target");
-  assert.equal((await a.messenger.send("b", { text: "not an ask yet", expectsReply: true })).code, "reply_not_supported");
+  assert.equal((await a.messenger.send("b", { text: "not a valid reply", replyTo: { senderId: "b", workgroup: "shared", messageId: "absent" } })).code, "ask_not_pending");
 });
 
 test("zero/one/multiple groups, ambiguous names and colliding message references remain isolated", async (t) => {
