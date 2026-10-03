@@ -96,12 +96,12 @@ export class DeliveryService {
     }
     const selected = this.registry.resolve(endpoint, { to: input.to, workgroup: input.workgroup }, true);
     if (selected.session.id !== input.to) throw new RegistryError("target_not_found"); // Exact-send never follows aliases.
-    if (selected.session.endpointEpoch !== input.endpointEpoch) return { messageId: body.id, workgroup: input.workgroup,
-      delivery: "failed", code: "endpoint_rebound", retryable: true, outcomeKnown: true };
     const target = selected.session;
     const senderStamp = this.registry.membership(endpoint, input.workgroup);
     const receiverStamp = this.registry.membershipForId(target.id, input.workgroup);
     if (senderStamp.epoch !== input.senderMembershipEpoch || receiverStamp.epoch !== input.membershipEpoch) throw new RegistryError("workgroup_left");
+    if (target.endpointEpoch !== input.endpointEpoch) return { messageId: body.id, workgroup: input.workgroup,
+      delivery: "failed", code: "endpoint_rebound", retryable: true, outcomeKnown: true };
     const message: Message = { ...body, sender: { id: sender.id, ...(sender.name ? { name: sender.name } : {}) },
       recipientId: target.id, workgroup: input.workgroup, brokerReceivedAt: this.now() };
     checkMessageFrame(message);

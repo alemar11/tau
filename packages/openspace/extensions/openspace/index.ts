@@ -1,10 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 import { loadConfig, loadEnvironment, type OpenspaceConfig } from "../../src/config.ts";
 import { resolvePaths } from "../../src/paths.ts";
 import { parseMessage } from "../../src/protocol/delivery.ts";
 import { PiRuntime } from "./runtime.ts";
 import { registerTools } from "./tools.ts";
+import { registerCommands } from "./commands.ts";
+import { renderMessage } from "./ui/render.ts";
 
 /** Internal injection seam for isolated SDK fixtures; not the public extension bus API. */
 export interface InstallOptions {
@@ -16,11 +17,9 @@ export function installOpenspace(pi: ExtensionAPI, options: InstallOptions = {})
   let runtime: PiRuntime | undefined;
   let generation = 0;
   registerTools(pi, () => runtime);
-  pi.registerMessageRenderer("openspace_message", (message, { expanded }, theme) => {
-    const content = typeof message.content === "string" ? message.content : JSON.stringify(message.content);
-    const safe = content.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
-    return new Text(theme.fg("accent", "Openspace\n") + (expanded ? safe : safe.split("\n").slice(0, 5).join("\n")), 0, 0);
-  });
+  registerCommands(pi, () => runtime);
+  pi.registerMessageRenderer("openspace_message", (message, { expanded }, theme) => renderMessage(
+    typeof message.content === "string" ? message.content : JSON.stringify(message.content), message.details, expanded, theme));
   pi.on("session_start", async (_event, ctx) => {
     const epoch = ++generation, previous = runtime; runtime = undefined;
     await previous?.stop();

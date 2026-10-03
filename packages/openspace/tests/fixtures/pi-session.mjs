@@ -16,6 +16,7 @@ export async function piSession(fixture, options = {}) {
   const config = { ...loadConfig(join(dir, "missing.json")), ...options.config };
   const settings = SettingsManager.inMemory({ compaction: { enabled: false, keepRecentTokens: 1, reserveTokens: 100 }, retry: { enabled: false } });
   const loader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings, noSkills: true, noPromptTemplates: true, noContextFiles: true,
+    additionalExtensionPaths: options.extensionPaths, additionalThemePaths: options.themePaths,
     extensionFactories: [(pi) => {
       api = pi;
       pi.registerProvider(provider, { api: "openai-completions", baseUrl: "http://127.0.0.1:1/not-used", apiKey: "fixture-not-a-secret",
@@ -54,7 +55,7 @@ export async function piSession(fixture, options = {}) {
   session.subscribe((event) => { if (event.type === "extension_error") errors.push(event); });
   const mode = options.mode ?? "tui";
   await session.bindExtensions({ mode, uiContext: mode === "tui" || mode === "rpc" ? { notify: (text, kind) => notifications.push({ text, kind }),
-    confirm: options.confirm ?? (async () => { throw new Error("Unexpected confirmation"); }) } : undefined, onError: (error) => errors.push(error) });
+    confirm: options.confirm ?? (async () => { throw new Error("Unexpected confirmation"); }), ...options.ui } : undefined, onError: (error) => errors.push(error) });
   await runtime.controller.ensureConnected();
   let closed = false;
   const close = async () => {

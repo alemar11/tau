@@ -105,6 +105,7 @@ export class Messenger {
         // Only this explicit, known-not-delivered response permits one retry. Never repeat an uncertain write.
         target = await this.resolve({ to: selected.session.id, workgroup: selected.workgroup });
         if (target.session.id !== selected.session.id || target.workgroup !== selected.workgroup) throw new ClientError("target_not_found");
+        if (target.membershipEpoch !== selected.membershipEpoch || target.senderMembershipEpoch !== selected.senderMembershipEpoch) throw new ClientError("workgroup_left");
       }
       throw new ClientError("endpoint_rebound");
     } catch (error) { return this.failure(id, selected.workgroup, error); }

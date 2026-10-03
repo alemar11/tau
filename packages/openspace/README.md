@@ -4,9 +4,9 @@ Package Pi autonomo per la comunicazione locale fra sessioni. Nome npm `openspac
 
 ## Stato effettivo
 
-Implementati i passi **01–07**: broker Unix, registry, recovery, delivery e adapter Pi. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
+Implementati i passi **01–08**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply e UI. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
 
-**UI di composizione, comandi workgroup, API estensioni, CLI operativa e handover non sono ancora disponibili.** Il servizio interno di preferenze per sessione è pronto per i comandi. Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
+Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). **API estensioni, CLI operativa e handover non sono ancora disponibili.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -52,7 +52,7 @@ File opzionale: `$PI_CODING_AGENT_DIR/openspace/config.json`, altrimenti `~/.pi/
 
 Questi sono i default della configurazione. Senza `brokerCommand`, il launcher interno verifica Node.js 22.19+ e risolve `tsx/esm` dal package: niente `npx` o loader cercato nel cwd runtime, né riuso di un eseguibile host standalone come Node. `brokerCommand` opzionale sostituisce l'eseguibile; `brokerArgs` è il suo prefisso di argomenti, seguito dall'entry del broker e da `--runtime-dir <directory>`. Un prefisso non vuoto richiede un comando esplicito. Percorsi con spazi/Unicode vengono passati come argomenti, senza shell.
 
-Il factory registra soltanto tool, renderer e handler. **A `session_start` l'estensione abilitata avvia o riusa il broker e si registra**; shutdown/reload/sostituzione chiudono le risorse del vecchio runtime. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
+Il factory registra soltanto tool, comandi, renderer e handler. **A `session_start` l'estensione abilitata avvia o riusa il broker e si registra**; shutdown/reload/sostituzione chiudono le risorse del vecchio runtime. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
 
 Campi opzionali:
 
@@ -83,7 +83,7 @@ PI_OPENSPACE_WORKGROUPS=progetto,review pi -e ./packages/openspace
 
 Il parser applica trim, deduplicazione e confronto esatto case-sensitive; rifiuta componenti vuoti interni, virgole nei singoli nomi e caratteri di controllo. Non tronca i nomi o applica un limite arbitrario per singolo gruppo; il registry applica il budget al record JSON completo. `default` è riservato e non configurabile, nemmeno insieme ad altri nomi: lista specifica vuota → solo `[default]`, altrimenti solo i gruppi specifici.
 
-Il servizio interno salva preferenze versionate tramite entry Pi `openspace_workgroups`, legate all'ID Pi e non al routing ID o al ramo. La scelta salvata, inclusa `[]`, prevale sul seed. Reload/resume la ripristinano; fork/nuova sessione con ID diverso ignorano entry copiate. `/openspace-workgroups` arriva nel passo 08. Nessuna mutazione di env o config globali. Un errore di salvataggio è esplicito: i gruppi live già accettati restano autorevoli, senza rollback che riaprirebbe le operazioni annullate. `saved` indica accettazione dell'entry da Pi, non fsync; sessioni in-memory restano effimere. I workgroup organizzano routing/discovery, non autenticano peer né isolano il contesto del modello.
+Il servizio interno salva preferenze versionate tramite entry Pi `openspace_workgroups`, legate all'ID Pi e non al routing ID o al ramo. La scelta salvata, inclusa `[]`, prevale sul seed. Reload/resume la ripristinano; fork/nuova sessione con ID diverso ignorano entry copiate. `/openspace-workgroups` permette list/add/remove e mostra le transizioni automatiche del fallback. Nessuna mutazione di env o config globali. Un errore di salvataggio è esplicito: i gruppi live già accettati restano autorevoli, senza rollback che riaprirebbe le operazioni annullate. `saved` indica accettazione dell'entry da Pi, non fsync; sessioni in-memory restano effimere. I workgroup organizzano routing/discovery, non autenticano peer né isolano il contesto del modello.
 
 ## Broker locale: stato e limiti
 
@@ -158,6 +158,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

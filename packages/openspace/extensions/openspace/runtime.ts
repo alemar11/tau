@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { OpenspaceClient, ClientError } from "../../src/client/client.ts";
 import { ConnectionController } from "../../src/client/controller.ts";
 import { Conversation } from "../../src/client/conversation.ts";
-import { messageRef, type MessageRef } from "../../src/protocol/delivery.ts";
+import { messageRef, refKey, type MessageRef } from "../../src/protocol/delivery.ts";
 import { Messenger, type SendOptions } from "../../src/client/messenger.ts";
 import { ensureBroker } from "../../src/broker/spawn.ts";
 import type { OpenspaceConfig, OpenspaceEnvironment } from "../../src/config.ts";
@@ -12,6 +12,7 @@ import type { SessionStatus } from "../../src/registry/session.ts";
 import type { Message } from "../../src/protocol/delivery.ts";
 import { Receiver, BUSY_NOTICE, messageContent } from "./receiver.ts";
 import { restoredWorkgroups, WorkgroupPreferences } from "./preferences.ts";
+import { singleLine } from "./ui/render.ts";
 
 export class PiRuntime {
   readonly client: OpenspaceClient;
@@ -30,6 +31,7 @@ export class PiRuntime {
   private readonly tools = new Map<string, string>();
   private note?: string;
   private readonly unsubscribe: () => void;
+  private readonly unsubscribeReceipts: () => void;
   private desired?: Record<string, unknown>;
   private publishing = false;
   private lastPresence?: string;
@@ -66,6 +68,17 @@ export class PiRuntime {
         if (!this.compacting && (this.running || this.ctx.isIdle())) return;
         await delay(250, undefined, { signal: this.signal, ref: false });
       }
+    });
+    const receipts = new Map<string, string>();
+    this.unsubscribeReceipts = this.messenger.subscribe((event) => {
+      if (!this.alive || !this.ctx.hasUI || event.type !== "receipt") return;
+      const { receipt } = event;
+      if (!["injected", "expired", "cancelled", "superseded", "cancellation_requested"].includes(receipt.status)) return;
+      const key = refKey(receipt.ref);
+      if (receipts.get(key) === receipt.status) return;
+      receipts.delete(key); receipts.set(key, receipt.status);
+      if (receipts.size > 256) receipts.delete(receipts.keys().next().value!);
+      this.ctx.ui.notify(singleLine(`Openspace · ${receipt.ref.messageId} [${receipt.ref.workgroup}] · ${receipt.status}${receipt.code ? ` (${receipt.code})` : ""} · non prova completamento`), receipt.status === "injected" ? "info" : "warning");
     });
     this.unsubscribe = this.client.subscribe((event) => {
       if (!this.alive) return;
@@ -176,7 +189,7 @@ export class PiRuntime {
   }
   async stop(): Promise<void> {
     if (!this.alive) return;
-    this.alive = false; this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.receiver.stop(); this.messenger.dispose();
+    this.alive = false; this.conversation.dispose(); this.lifetime.abort(); this.unsubscribe(); this.unsubscribeReceipts(); this.receiver.stop(); this.messenger.dispose();
     await this.controller.stop();
   }
 }

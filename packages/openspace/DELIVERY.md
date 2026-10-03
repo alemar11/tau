@@ -8,7 +8,7 @@
 
 `send(to, {text, messageId?, workgroup?, cwd?, attachments?, supersedes?, retryOf?, provenance?, signal?})` restituisce un `DeliveryResult`. `sendResolved` mantiene una selezione già fatta, utile per conferma/compose. Il messageId esplicito è conservato; altrimenti viene generato un UUID. Le mutazioni del payload del caller durante lookup non cambiano il testo inviato.
 
-Il broker ottiene il mittente dalla connessione posseduta. Il wire contiene destinatario ID + endpointEpoch, workgroup, epoch di entrambe le membership e il corpo. La riadesione a un gruppo non rende valide lookup precedenti. Solo `endpoint_rebound`, che garantisce **nessuna consegna**, permette un unico nuovo lookup e retry, verso lo stesso ID e gruppo. Nessun retry automatico dopo timeout, abort o perdita di un acknowledgement.
+Il broker ottiene il mittente dalla connessione posseduta. Il wire contiene destinatario ID + endpointEpoch, workgroup, epoch di entrambe le membership e il corpo. La riadesione a un gruppo non rende valide lookup precedenti. Solo `endpoint_rebound`, che garantisce **nessuna consegna**, permette un unico nuovo lookup e retry, verso lo stesso ID e gruppo e senza riacquisire epoch di membership diversi. Nessun retry automatico dopo timeout, abort o perdita di un acknowledgement.
 
 Risultato:
 

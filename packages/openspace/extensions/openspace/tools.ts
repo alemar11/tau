@@ -2,6 +2,7 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ClientError } from "../../src/client/client.ts";
 import type { PiRuntime } from "./runtime.ts";
+import { RenderBlock, renderTool } from "./ui/render.ts";
 
 export function registerTools(pi: ExtensionAPI, current: () => PiRuntime | undefined): void {
   pi.registerTool({
@@ -16,6 +17,8 @@ export function registerTools(pi: ExtensionAPI, current: () => PiRuntime | undef
       attachments: Type.Optional(Type.Array(Type.Object({ type: Type.Union([Type.Literal("file"), Type.Literal("snippet"), Type.Literal("context")]),
         name: Type.String(), text: Type.String(), language: Type.Optional(Type.String()) }), { maxItems: 32 })),
     }),
+    renderCall: (args, theme) => new RenderBlock(`Openspace ${args.action ?? "…"}${args.to ? ` → ${args.to}` : ""}${args.workgroup ? ` [${args.workgroup}]` : ""}`, "", theme),
+    renderResult: (result, options, theme, context) => renderTool(result.details, options.expanded, theme, context.isError),
     async execute(_id, params, signal, _update, ctx) {
       const runtime = current();
       try {

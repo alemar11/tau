@@ -68,6 +68,7 @@ test("exact rebound permits one retry, while leave/rejoin during lookup never re
   await until(() => b.messages().length === 1);
   const staleTarget = await a.messenger.resolve({ to: "b", workgroup: "x" });
   await b.client.setWorkgroups(["y"]); await b.client.setWorkgroups(["x", "y"]);
+  await b.client.disconnect(); await b.client.connect();
   assert.equal((await a.messenger.sendResolved(staleTarget, { text: "stale target membership" })).code, "workgroup_left");
   const staleSender = await a.messenger.resolve({ to: "b", workgroup: "x" });
   await a.client.setWorkgroups(["y"]); await a.client.setWorkgroups(["x", "y"]);
@@ -82,6 +83,16 @@ test("exact rebound permits one retry, while leave/rejoin during lookup never re
   };
   assert.equal((await a.messenger.sendResolved(initial, { text: "only one retry" })).code, "endpoint_rebound");
   assert.equal(resolves, 1); assert.equal(b.messages().length, 1);
+});
+
+test("membership cannot be reacquired between a rebound response and its one permitted lookup retry", async (t) => {
+  const { actor } = await setup(t), a = await actor("a", ["x", "y"]), b = await actor("b", ["x", "y"]);
+  const selected = await a.messenger.resolve({ to: "b", workgroup: "x" });
+  await b.client.disconnect(); await b.client.connect();
+  const resolve = a.messenger.resolve.bind(a.messenger);
+  a.messenger.resolve = async (selector) => { await b.client.setWorkgroups(["y"]); await b.client.setWorkgroups(["x", "y"]); return resolve(selector); };
+  const result = await a.messenger.sendResolved(selected, { text: "do not revive old membership" });
+  assert.equal(result.code, "workgroup_left"); assert.equal(result.outcomeKnown, true); assert.equal(b.messages().length, 0);
 });
 
 test("mailbox survives disconnect, but explicit leave cancels queued data and replay cannot revive it", async (t) => {
