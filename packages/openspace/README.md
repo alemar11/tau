@@ -4,9 +4,9 @@ Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `o
 
 ## Stato effettivo
 
-Implementati **package-foundation**, **local-broker** e **session-registry**: broker Unix, avvio coordinato, registry a ID unico, discovery, presenza delimitata, mutazioni dei gruppi e fencing persistente del takeover. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
+Implementati **package-foundation**, **local-broker**, **session-registry** e **client-recovery**: broker Unix, avvio coordinato, registry a ID unico, discovery, presenza delimitata, mutazioni dei gruppi e fencing persistente del takeover. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
 
-**Non è ancora uno strumento di messaggistica utilizzabile.** Client/reconnect, send/ask/reply, UI, comandi workgroup, persistenza delle preferenze nella sessione Pi, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
+**Non è ancora uno strumento di messaggistica utilizzabile.** Send/ask/reply, UI, comandi workgroup, persistenza delle preferenze nella sessione Pi, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -110,11 +110,21 @@ Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `request
 - `list`, `list-cwd`, `resolve`, `update`, `set-workgroups`, `release`: registry e mutazioni correlate, con proiezione dei gruppi visibili e revisioni CAS.
 - `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`; send esatto e bus estensioni non vengono pubblicizzati.
 
-Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il comportamento del controller Pi dopo il rifiuto sarà implementato separatamente.
+Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il controller core ferma retry e reconnect impliciti dopo il rifiuto; il collegamento al lifecycle e all'avviso Pi arriva nell'adapter.
 
 Prima di register, operazioni applicative falliscono con `registration_required`; una seconda register chiude il peer con `already_registered`. Operazioni non implementate dopo register restituiscono `unsupported_operation`, mai un falso successo. Nome/versione incompatibili producono `incompatible_protocol`.
 
 Limiti per broker: **128** connessioni registrate, **32** non registrate, deadline di registrazione **1 s**; token bucket per connessione di **240** messaggi, refill **120/s**. Le write usano la coda nativa di Node, con un budget di **4 MiB per peer**, header inclusi: oltre il budget il peer lento viene disconnesso. Nessuna coda applicativa illimitata; i limiti sono di trasporto, non autorizzazione o isolamento da processi ostili dello stesso utente.
+
+## Client e recovery
+
+`src/client/client.ts` espone un client senza import Pi o auto-spawn: connect/resume, disconnect, roster/lookup, presence e mutazioni serializzate dei gruppi. La stessa istanza conserva la lease dopo un errore di rete; dopo un register dall'esito incerto usa soltanto resume, mai una nuova claim. Un rifiuto terminale non viene cancellato da disconnect/connect.
+
+`ConnectionController` coordina startup, tool e background in un solo tentativo. L'hook opzionale `ensureBroker` è riservato all'estensione, non alla CLI. Backoff 1/2/5/10/30 secondi, poi 30; un errore permanente o una revoca lo fermano. Stop è terminale per quel controller e invalida callback tardive. Un nuovo runtime richiede un nuovo controller, non un reset implicito della revoca.
+
+Heartbeat dedicato ping/pong: 30 secondi, timeout 5 secondi clamped all'intervallo. Una list lenta non interferisce. Correlazione con ID automatici mai riutilizzati, timeout e cleanup dei pending; massimo 256 richieste simultanee. Gli ID espliciti non sono riutilizzabili nel runtime (budget 65536), così una risposta tardiva non risolve una nuova richiesta. Listener consumer sincroni/asincroni falliti non interrompono il trasporto.
+
+Le mutazioni usano revisioni CAS, coda seriale e riconciliazione dopo un esito incerto. `mutateWorkgroups` applica una trasformazione alla lista corrente, senza perdere aggiunte concorrenti. Gli stamp per gruppo sopravvivono al disconnect sullo stesso broker; leave/rejoin e restart li invalidano. Uno stamp valido non basta a dimostrare che il socket sia connesso. Reconnect non reinvia automaticamente contenuti.
 
 ## Verifiche
 
@@ -126,6 +136,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora i percorsi di messaggistica, il reconnect automatico del client o l'integrazione del broker nel lifecycle Pi.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora i percorsi di messaggistica o l'integrazione del broker nel lifecycle Pi.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

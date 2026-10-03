@@ -11,14 +11,8 @@ import { project, RegistryError, type SessionInfo } from "../registry/session.ts
 import { acquireClaim, identity, prepareRuntime, privateSocket, sameFile, unlinkOwned } from "./runtime-files.ts";
 import { probeBroker } from "./probe.ts";
 
-export interface Clock {
-  now(): number;
-  after(ms: number, callback: () => void): () => void;
-}
-export const systemClock: Clock = {
-  now: () => performance.now(),
-  after: (ms, callback) => { const timer = setTimeout(callback, ms); return () => clearTimeout(timer); },
-};
+import { systemClock, type Clock } from "../clock.ts";
+export { systemClock, type Clock } from "../clock.ts";
 export const BROKER_LIMITS = {
   idleMs: 5_000, registrationMs: 1_000, unregistered: 32, registered: 128,
   rateCapacity: 240, ratePerSecond: 120, outputBytes: MAX_OUTPUT_BYTES,
