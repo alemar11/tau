@@ -3,14 +3,8 @@ import { truncateToWidth, wrapTextWithAnsi, type Component } from "@earendil-wor
 import { object, type SessionInfo } from "../../../src/registry/session.ts";
 import { parseMessage, type DeliveryResult } from "../../../src/protocol/delivery.ts";
 
-export const terminalSafe = (text: string): string => text.replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g,
-  (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
-export const singleLine = (text: string): string => terminalSafe(text).replace(/\n/g, "\\n");
-export function shortId(id: string, peers: SessionInfo[]): string {
-  let length = Math.min(8, id.length);
-  while (length < id.length && peers.some((peer) => peer.id !== id && peer.id.startsWith(id.slice(0, length)))) length++;
-  return id.slice(0, length);
-}
+import { terminalSafe, singleLine, shortId } from "../../../src/presentation.ts";
+export { terminalSafe, singleLine, shortId } from "../../../src/presentation.ts";
 export function peerLabel(peer: SessionInfo, peers: SessionInfo[]): string {
   return singleLine(`[${shortId(peer.id, peers)}] ${peer.name ?? peer.runtimeFallbackAlias ?? "sessione"} · ${peer.workgroups.join(", ")}`);
 }

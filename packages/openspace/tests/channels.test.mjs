@@ -205,10 +205,11 @@ test("lost capability acknowledgement retries idempotently without early onReady
   assert.equal((await binding.channel.publish("after retry", { audience: "capable" })).written, 1);
 });
 
-test("pending commits have a session-wide bound and all settle once on group departure; rejoin never replays them", async (t) => {
+test("pending commits have a session-wide bound and all settle once on group departure; rejoin never replays them", { timeout: 30_000 }, async (t) => {
   const f = await setup(t, { limits: { rateCapacity: 1000 } }); let drop = true;
   const link = await proxy(f, (value) => drop && value.type === "channel_state_result" ? undefined : value);
-  const a = await actor(f, "a", ["x", "y"], { socketPath: link.path }), binding = bind(a, "example", "x"); await connected(binding);
+  // This test exercises capacity/departure, not a wall-clock timeout while 128 durable commits fsync under parallel suite load.
+  const a = await actor(f, "a", ["x", "y"], { socketPath: link.path, clock: new FakeClock() }), binding = bind(a, "example", "x"); await connected(binding);
   const ids = Array.from({ length: 128 }, (_, index) => binding.channel.commitState({ index }));
   assert.throws(() => binding.channel.commitState("overflow"), code("channel_request_capacity"));
   await a.client.setWorkgroups(["y"]);

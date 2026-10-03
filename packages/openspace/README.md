@@ -4,11 +4,11 @@ Package Pi autonomo per la comunicazione locale fra sessioni. Nome npm `openspac
 
 ## Stato effettivo
 
-Implementati i passi **01–10**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply, UI, canali, outbox e identity claim per estensioni. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
+Implementati i passi **01–11**: broker Unix, registry, recovery, delivery, adapter Pi, ask/reply, UI, canali, outbox, identity claim e CLI per automazioni. Il tool `openspace` permette list/list-cwd/status/send/cancel/ask/reply/pending e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
 
-Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). Le API pubbliche per [canali e stato revisionato](CHANNELS.md) e [outbox/identity claim](OUTBOX.md) sono disponibili. **CLI operativa e handover non sono ancora disponibili.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
+Roster/compose e comandi alias/ID/workgroup sono disponibili: vedere [Comandi e UI](UI.md). Le API pubbliche per [canali e stato revisionato](CHANNELS.md) e [outbox/identity claim](OUTBOX.md) sono disponibili. La [CLI list/send/ask](CLI.md) è operativa. **Handover non è ancora disponibile.** Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
 
-Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
+Il bin `openspace` usa un broker già esistente, senza auto-spawn o import del runtime Pi. Con `--json` restituisce un solo oggetto anche sugli errori applicativi: exit **0** successo al livello dichiarato, **1** errore/interruzione, **2** timeout del waiter ask. `queued` non è consegna al socket né completamento.
 
 ## Preparare e caricare il package
 
@@ -61,7 +61,7 @@ Campi opzionali:
 
 Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = `steer | human-first`; gli altri flag sono booleani, `brokerArgs` un array di stringhe. Command, argomenti e stable ID rifiutano NUL espliciti. Config assente → default; JSON/campi noti invalidi o errori di lettura → errore con path e campo ove applicabile, mai fallback silenzioso. Le chiavi sconosciute vengono ignorate, non abilitate come funzionalità. Non sono consumate opzioni Herdr/SSH.
 
-`enabled: false` non carica le variabili proprie né avvia risorse. Config nuova a ogni `session_start`/reload, nessun watcher. Non si scrivono file di configurazione o variabili globali.
+Nell'estensione Pi, `enabled: false` non carica le variabili proprie né avvia risorse. Config nuova a ogni `session_start`/reload, nessun watcher. Non si scrivono file di configurazione o variabili globali.
 
 ### Ambiente Openspace
 
@@ -84,6 +84,16 @@ PI_OPENSPACE_WORKGROUPS=progetto,review pi -e ./packages/openspace
 Il parser applica trim, deduplicazione e confronto esatto case-sensitive; rifiuta componenti vuoti interni, virgole nei singoli nomi e caratteri di controllo. Non tronca i nomi o applica un limite arbitrario per singolo gruppo; il registry applica il budget al record JSON completo. `default` è riservato e non configurabile, nemmeno insieme ad altri nomi: lista specifica vuota → solo `[default]`, altrimenti solo i gruppi specifici.
 
 Il servizio interno salva preferenze versionate tramite entry Pi `openspace_workgroups`, legate all'ID Pi e non al routing ID o al ramo. La scelta salvata, inclusa `[]`, prevale sul seed. Reload/resume la ripristinano; fork/nuova sessione con ID diverso ignorano entry copiate. `/openspace-workgroups` permette list/add/remove e mostra le transizioni automatiche del fallback. Nessuna mutazione di env o config globali. Un errore di salvataggio è esplicito: i gruppi live già accettati restano autorevoli, senza rollback che riaprirebbe le operazioni annullate. `saved` indica accettazione dell'entry da Pi, non fsync; sessioni in-memory restano effimere. I workgroup organizzano routing/discovery, non autenticano peer né isolano il contesto del modello.
+
+## CLI per script
+
+```sh
+./node_modules/.bin/openspace list --json
+./node_modules/.bin/openspace send --to worker --text "Build fallita" --name build-hook --json
+./node_modules/.bin/openspace ask --to planner --text "Quale API uso?" --timeout-ms 120000 --json
+```
+
+La CLI usa un nuovo ID e i propri gruppi ambientali, non stable ID o preferenze Pi ereditate. `--workgroup` seleziona un gruppo già condiviso. Timeout CLI, receiver e broker sono indipendenti; timeout/disconnect non cancellano il lavoro. La [guida CLI](CLI.md) specifica parsing, campi JSON, errori di launcher, segnali, limiti e PATH senza installazioni globali.
 
 ## Broker locale: stato e limiti
 
@@ -167,6 +177,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato. Due consumer Pi reali verificano canali/stato e ordine inverso di caricamento senza sendMessage, entry o chiamate modello; i test coprono anche ack persi, quote, CAS, leave/rejoin, SIGKILL, corruzione/backup e import/tipi da tarball installato senza peer Pi. L'outbox è verificata tra sessioni Pi reali con attribution, dialoghi sospesi, duplicati fra producer, budget, routing live, leave/rejoin, reload/shutdown, invii incerti e identità per-sessione senza mutazioni globali.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply è verificato anche nel loop modello→tool→modello, con allegati Unicode, correlazione anticipata, timeout indipendenti e reply-before-injection. La UI è verificata con il broker reale, keybinding/paste/Unicode, viewport stretti, tema mutabile, lifecycle, headless e coesistenza con Calm/Orange; nessuno smoke manuale IME è dichiarato. Due consumer Pi reali verificano canali/stato e ordine inverso di caricamento senza sendMessage, entry o chiamate modello; i test coprono anche ack persi, quote, CAS, leave/rejoin, SIGKILL, corruzione/backup e import/tipi da tarball installato senza peer Pi. L'outbox è verificata tra sessioni Pi reali con attribution, dialoghi sospesi, duplicati fra producer, budget, routing live, leave/rejoin, reload/shutdown, invii incerti e identità per-sessione senza mutazioni globali. I test CLI eseguono il vero launcher, JSON anche su errori config/parse, early reply, timeout indipendenti, segnali, output bloccato, gruppi distinti dalle preferenze Pi e il bin link da tarball senza peer Pi.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

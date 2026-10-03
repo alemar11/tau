@@ -9,7 +9,7 @@
   "os": ["darwin", "linux"],
   "engines": { "node": ">=22.19.0" },
   "exports": { "./extension-api": { "types": "./extension-api.d.mts", "default": "./extension-api.mjs" }, "./package.json": "./package.json" },
-  "files": ["extension-api.mjs", "extension-api.d.mts", "cli.mjs", "cli.ts", "extensions/", "src/", "examples/", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md", "UI.md", "CHANNELS.md", "OUTBOX.md"],
+  "files": ["extension-api.mjs", "extension-api.d.mts", "cli.mjs", "cli.ts", "extensions/", "src/", "examples/", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md", "UI.md", "CHANNELS.md", "OUTBOX.md", "CLI.md"],
   "pi": { "extensions": ["./extensions/openspace/index.ts"] },
   "bin": { "openspace": "./cli.mjs" },
   "scripts": {

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { discoverAndLoadExtensions } from "@earendil-works/pi-coding-agent";
+import { startBroker } from "../src/broker/server.ts";
+import { OpenspaceClient } from "../src/client/client.ts";
+import { Messenger } from "../src/client/messenger.ts";
+import { Conversation } from "../src/client/conversation.ts";
+import { fixture as brokerFixture, until } from "./fixtures/broker-helpers.mjs";
 
 const packageDir = fileURLToPath(new URL("../", import.meta.url));
 const manifest = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
@@ -74,9 +79,12 @@ test("Pi 0.99.1 loader discovers exactly the declared extension and no helpers/t
   assert.deepEqual(loaded.extensions.map((extension) => extension.path), [join(packageDir, "extensions", "openspace", "index.ts")]);
   assert.equal(loaded.extensions[0].handlers.get("session_start").length, 1);
   assert.equal(existsSync(join(root, "agent", "openspace")), false);
+  for (const prefix of [root, join(root, "agent", "npm"), join(root, ".pi", "npm")]) {
+    assert.equal(existsSync(join(prefix, "node_modules", ".bin", "openspace")), false);
+  }
 });
 
-test("tarball includes executable runtime, attribution and explicit Pi resources, not development/study files", (t) => {
+test("tarball includes executable runtime, attribution and explicit Pi resources, not development/study files", async (t) => {
   const root = fixture(t);
   const env = { ...process.env, npm_config_update_notifier: "false" };
   const packed = JSON.parse(execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", root], {
@@ -87,7 +95,7 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   assert.equal(packed[0].name, "openspace");
   assert.equal(packed[0].filename, `openspace-${manifest.version}.tgz`);
   const files = new Set(packed[0].files.map((file) => file.path));
-  for (const name of ["OUTBOX.md", "examples/outbox.ts", "extensions/openspace/outbox.ts", "extensions/openspace/identity.ts", "src/protocol/outbox.ts", "extension-api.mjs", "extension-api.d.mts", "src/protocol/channels.ts", "src/client/channels.ts", "src/broker/channels.ts", "src/broker/channel-state.ts", "extensions/openspace/channels.ts", "cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "src/registry/registry.ts", "src/registry/session.ts", "src/registry/leases.ts", "src/clock.ts", "src/client/client.ts", "src/client/controller.ts", "src/client/responses.ts", "src/client/messenger.ts", "src/client/conversation.ts", "src/client/reply-tracker.ts", "src/broker/asks.ts", "src/protocol/delivery.ts", "src/broker/delivery.ts", "extensions/openspace/index.ts", "extensions/openspace/commands.ts", "extensions/openspace/ui/overlay.ts", "extensions/openspace/ui/render.ts", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md", "UI.md", "CHANNELS.md", "package.json"]) {
+  for (const name of ["CLI.md", "src/presentation.ts", "OUTBOX.md", "examples/outbox.ts", "extensions/openspace/outbox.ts", "extensions/openspace/identity.ts", "src/protocol/outbox.ts", "extension-api.mjs", "extension-api.d.mts", "src/protocol/channels.ts", "src/client/channels.ts", "src/broker/channels.ts", "src/broker/channel-state.ts", "extensions/openspace/channels.ts", "cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "src/registry/registry.ts", "src/registry/session.ts", "src/registry/leases.ts", "src/clock.ts", "src/client/client.ts", "src/client/controller.ts", "src/client/responses.ts", "src/client/messenger.ts", "src/client/conversation.ts", "src/client/reply-tracker.ts", "src/broker/asks.ts", "src/protocol/delivery.ts", "src/broker/delivery.ts", "extensions/openspace/index.ts", "extensions/openspace/commands.ts", "extensions/openspace/ui/overlay.ts", "extensions/openspace/ui/render.ts", "README.md", "REGISTRY.md", "DELIVERY.md", "ASKS.md", "UI.md", "CHANNELS.md", "package.json"]) {
     assert.ok(files.has(name), `missing ${name}`);
   }
   for (const name of files) assert.doesNotMatch(name, /(^|\/)(tests|fixtures|plans|node_modules|dist|coverage|\.pi)(\/|$)|\.test\.|package-lock|tsconfig/);
@@ -126,9 +134,26 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   writeFileSync(join(consumer, "consumer.mts"), 'import type { ExtensionRegistration, OutboxRequest, OutboxResult, SessionIdentityRequest } from "openspace/extension-api"; const request: OutboxRequest = { version: 1, requestId: "unique", extensionId: "test", extensionName: "Test", to: "peer", message: "hello" }; const result: OutboxResult = { version: 1, requestId: request.requestId, status: "sent" }; const identity: SessionIdentityRequest = { version: 1, claim(id) { return !!id; } }; const registration: ExtensionRegistration = { namespace: "example", ownerEligible: true, onReady(channel) { const id: string = channel.commitState({ ok: true }, 0); void channel.publish({ id }, { audience: "capable" }); }, onEvent(event) { if (event.type === "state_result") { const id: string = event.requestId; } } };');
   const checked = spawnSync(process.execPath, [fileURLToPath(import.meta.resolve("typescript/bin/tsc")), "--noEmit", "--strict", "--module", "NodeNext", "--target", "ES2022", join(consumer, "consumer.mts")], { cwd: consumer, env: environment(root), encoding: "utf8", timeout: 30_000 });
   assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+
+  const f = brokerFixture(t), broker = await startBroker(f.paths); f.cleanup(() => broker.stop());
+  const peer = new OpenspaceClient({ socketPath: f.paths.socketPath, session: { id: "standalone-peer", cwd: f.root, model: "fixture", pid: process.pid } });
+  const messenger = new Messenger(peer), conversation = new Conversation(messenger); let notices = 0;
+  messenger.subscribe((event) => { if (event.type === "message") { notices++; if (event.message.expectsReply) void conversation.reply({}, { text: "standalone answer" }); } });
+  f.cleanup(async () => { conversation.dispose(); messenger.dispose(); await peer.disconnect(); }); await peer.connect();
+  const linked = join(consumer, "node_modules", ".bin", "openspace"); assert.equal(existsSync(linked), true);
+  for (const args of [["list", "--json"], ["send", "--to", "standalone-peer", "--text", "notice", "--json"], ["ask", "--to", "standalone-peer", "--text", "question", "--json"]]) {
+    const child = spawn(linked, args, { cwd: consumer, env: f.env, stdio: ["ignore", "pipe", "pipe"] }); let out = "", err = "";
+    child.stdout.on("data", (data) => { out += data; }); child.stderr.on("data", (data) => { err += data; });
+    const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);
+    const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => { clearTimeout(timer); resolve(code); }); });
+    assert.equal(code, 0, err || out); assert.equal(err, ""); const result = JSON.parse(out); assert.equal(result.ok, true);
+    if (args[0] === "list") assert.equal(result.sessions[0].id, "standalone-peer");
+    if (args[0] === "ask") assert.equal(result.response.text, "standalone answer");
+  }
+  await until(() => notices === 2); assert.equal(existsSync(join(consumer, "node_modules", "@earendil-works", "pi-coding-agent")), false);
 });
 
-test("launcher runs without Pi imports and refuses unavailable commands without touching the runtime", (t) => {
+test("launcher runs without Pi imports and fails missing broker/invalid usage without touching the runtime", (t) => {
   const root = fixture(t);
   for (const args of [["--help"], ["--version"], ["list"], ["send", "peer", "text"]]) {
     const result = spawnSync(process.execPath, [join(packageDir, "cli.mjs"), ...args], {
@@ -138,14 +163,14 @@ test("launcher runs without Pi imports and refuses unavailable commands without 
     assert.equal(result.signal, null, result.stderr);
     if (args[0] === "--help") {
       assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, /not implemented/);
+      assert.match(result.stdout, /list.*send.*ask/);
     } else if (args[0] === "--version") {
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout.trim(), `openspace ${manifest.version}`);
     } else {
-      assert.equal(result.status, 2);
+      assert.equal(result.status, 1);
       assert.equal(result.stdout, "");
-      assert.match(result.stderr, /not implemented/);
+      assert.match(result.stderr, args[0] === "list" ? /broker_unavailable/ : /usage_error/);
     }
   }
   assert.equal(existsSync(join(root, "agent")), false);
