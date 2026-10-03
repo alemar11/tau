@@ -66,8 +66,8 @@ import { formatMidToolExitError, isOrdinaryToolForMidToolExit } from "../shared/
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { formatChildModelResolutionDiagnostic, isChildModelResolutionFailure } from "../shared/model-resolution-diagnostic.ts";
 import { planAbortRecovery } from "../shared/abort-recovery.ts";
-import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence } from "../shared/mutation-evidence.ts";
-import { assertNativeAgent, assertNativeExecution, unavailableMutationSnapshot as snapshotTrackedMutations } from "../../shared/phase-one.ts";
+import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence, snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
+import { assertNativeAgent, assertNativeExecution, unavailableMutationSnapshot } from "../../shared/phase-one.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, hasSingleOutputChangedSinceSnapshot, resolveSingleOutput, validateFileOnlyOutputMode, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import {
 	formatSubagentModelVerificationError,
@@ -550,7 +550,7 @@ async function runSingleAttemptInner(
 		};
 		return result;
 	}
-	const mutationSnapshot = options.machine ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: options.cwd ?? runtimeCwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(options.cwd ?? runtimeCwd);
+	let mutationSnapshot = unavailableMutationSnapshot(options.cwd ?? runtimeCwd);
 	let structuredOutputToolInvoked = false;
 	let structuredOutputMessageStartIndex: number | undefined;
 	let toolAvailabilityError: string | undefined;
@@ -1406,7 +1406,10 @@ async function runSingleAttemptInner(
 		void (async () => {
 			try {
 				const input = createReportedChildSessionInput(launch, shared.transcriptWriter);
-				input.onAdmitted = () => { shared.outputSnapshot = captureSingleOutputSnapshot(options.outputPath); };
+				input.onAdmitted = () => {
+					shared.outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
+					if (options.gitEvidence) mutationSnapshot = snapshotTrackedMutations(options.cwd ?? runtimeCwd);
+				};
 				input.onWriterFinalizer = options.onWriterFinalizer;
 				input.admissionSignal = admission.signal;
 				input.deadlineAt = options.deadlineAt;
@@ -1541,6 +1544,7 @@ async function runSingleAttemptInner(
 	const remoteGitChanged = result.nativeMachine?.initialGit && result.nativeMachine.finalGit ? result.nativeMachine.initialGit.head !== result.nativeMachine.finalGit.head || result.nativeMachine.initialGit.dirty !== result.nativeMachine.finalGit.dirty : undefined;
 	const mutationEvidence = result.nativeMachine ? { source: "tracked-files" as const, trackedOnly: true as const, changedFiles: [], attemptedMutation: remoteGitChanged === true, ...(remoteGitChanged === undefined ? { unavailable: "Remote Git before/after evidence was incomplete." } : {}) } : collectTrackedMutationEvidence(mutationSnapshot, options.cwd ?? runtimeCwd);
 
+	if (options.gitEvidence) result.effects = { ...result.effects, trackedMutations: mutationEvidence };
 	const acceptanceOutput = getFinalOutput(result.messages ?? []);
 	let fullOutput = stripAcceptanceReport(acceptanceOutput);
 	if (!fullOutput.trim() && result.structuredOutput !== undefined) fullOutput = JSON.stringify(result.structuredOutput, null, 2);

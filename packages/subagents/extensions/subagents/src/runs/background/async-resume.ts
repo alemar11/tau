@@ -12,7 +12,7 @@ import { validateRunFanoutBudgetDescriptor } from "../shared/run-fanout-budget.t
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
 import { resultFilePath, resultPayloadPathForIndexedRun } from "./result-files.ts";
 import { canScanAsyncRunPrefix, MIN_SAFE_ASYNC_RUN_PREFIX_LENGTH } from "./run-id-query.ts";
-import { parallelHandoffPath, resolveRetainedWorktreeCwd } from "../shared/parallel-handoff.ts";
+import { parallelHandoffPath, resolveRetainedWorktreeCwd, resolveManagedWorktreeReference } from "../shared/parallel-handoff.ts";
 import { normalizeWorktreeBaseRef } from "../shared/worktree.ts";
 import { intersectThinkingCeilings, parseThinkingLevel, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
 import { assertWorkflowGraphHostSteps } from "../shared/host-step-status.ts";
@@ -51,6 +51,7 @@ export type AsyncResumeTarget = {
 	cwd?: string;
 	/** True when cwd is the retained managed worktree recorded by the handoff. */
 	managedWorktree?: boolean;
+	managedWorktreeReference?: SteeringRecoveryDescriptor["managedWorktreeReference"];
 	sessionFile?: string;
 	model?: string;
 	thinking?: string;
@@ -327,7 +328,7 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 		"subagentOnlyExtensions", "mcpDirectTools", "excludeTools", "mutationTools", "systemPrompt", "systemPromptMode", "inheritProjectContext", "inheritGlobalContext", "inheritSkills", "skills",
 		"skillPath", "agentFilePath", "memory", "outputPath", "outputMode", "structuredOutputSchema", "acceptance", "sessionDir", "artifactConfig",
 		"artifactsDir", "maxOutput", "controlConfig", "context", "intercomBridge", "absoluteDeadlineAt", "initialTurnBudget", "initialToolBudget", "maxSubagentDepth", "share", "capabilityCeiling",
-		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef",
+		"launchResolvedExtensions", "runFanoutBudget", "lane", "baseRef", "managedWorktreeReference",
 		"extensionBindings",
 		"requiredExtensions",
 	]);
@@ -351,6 +352,11 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (parsed.requiredExtensions !== undefined) {
 		try { parsed.requiredExtensions = snapshotRequiredChildExtensions(parsed.requiredExtensions, "requiredExtensions"); }
 		catch (error) { throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${error instanceof Error ? error.message : String(error)}`); }
+	}
+	if (parsed.managedWorktreeReference !== undefined) {
+		const ref = parsed.managedWorktreeReference as Partial<NonNullable<SteeringRecoveryDescriptor["managedWorktreeReference"]>> | null;
+		if (!ref || typeof ref.path !== "string" || !path.isAbsolute(ref.path) || typeof ref.runId !== "string" || !ref.runId
+			|| !Number.isInteger(ref.index) || ref.index! < 0) throw new Error(`Invalid managed worktree recovery reference in '${descriptorPath}'`);
 	}
 	if (parsed.lane !== undefined) parsed.lane = normalizeWorkflowLaneMetadata(parsed.lane, `Invalid async recovery descriptor '${descriptorPath}': lane`);
 	if (parsed.agentContract !== undefined) {
@@ -581,9 +587,11 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const capabilityCeiling = mode === "workflow"
 		? intersectSubagentCapabilityCeilings(status?.admissionCapabilityCeiling, result?.admissionCapabilityCeiling)
 		: intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
-	const managedWorktreeCwd = location.asyncDir
-		? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index)
-		: undefined;
+	const managedWorktreeCwd = recoveryDescriptor?.managedWorktreeReference !== undefined
+		? resolveManagedWorktreeReference(recoveryDescriptor.managedWorktreeReference)
+		: location.asyncDir ? resolveRetainedWorktreeCwd(parallelHandoffPath(location.asyncDir), runId, index) : undefined;
+	const managedWorktreeReference = recoveryDescriptor?.managedWorktreeReference ?? (managedWorktreeCwd && location.asyncDir
+		? { path: parallelHandoffPath(location.asyncDir), runId, index } : undefined);
 	const resumeCwd = validateResumeCwd(runId, managedWorktreeCwd ?? status?.cwd ?? result?.cwd ?? recoveryDescriptor?.cwd);
 
 	return {
@@ -596,7 +604,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		...(statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName ? { sessionName: statusSteps[index]?.sessionName ?? resultSteps[index]?.sessionName } : {}),
 		index,
 		...(resumeCwd ? { cwd: resumeCwd } : {}),
-		...(managedWorktreeCwd ? { managedWorktree: true } : {}),
+		...(managedWorktreeCwd ? { managedWorktree: true, managedWorktreeReference } : {}),
 		...(resolvedSessionFile ? { sessionFile: resolvedSessionFile } : {}),
 		...(stepModel ? { model: stepModel } : {}),
 		...(stepThinking ? { thinking: stepThinking } : {}),

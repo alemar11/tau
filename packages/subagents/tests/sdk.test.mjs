@@ -20,7 +20,9 @@ test("standalone package loads on the real Pi SDK without external integrations"
   const extension = loaded.extensions.find((entry) => entry.tools.has("subagent"));
   assert.ok(extension, "subagent registered");
   const schema = JSON.stringify(extension.tools.get("subagent").definition.parameters);
-  assert.doesNotMatch(schema, /mission\.create|schedule\.create|inspector\.open|worktree\.cleanup/);
+  assert.doesNotMatch(schema, /mission\.create|schedule\.create|inspector\.open/);
+  assert.match(schema, /worktree\.cleanup/);
+  assert.match(schema, /lane\.recordMerge/);
   const profiles = join(dir, "tau-subagents", "agents"); mkdirSync(profiles, { recursive: true });
   const provider = fileURLToPath(new URL("./support/provider.ts", import.meta.url));
   writeFileSync(join(profiles, "sdk-fixture.md"), `---\nname: sdk-fixture\ndescription: deterministic fixture\nmodel: tau-fixture/local\ntools: read\nextensions: ${provider}\ninheritProjectContext: true\n---\nReturn a short answer.\n`);

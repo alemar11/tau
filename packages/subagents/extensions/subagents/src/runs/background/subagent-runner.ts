@@ -1,8 +1,6 @@
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { performance } from "node:perf_hooks";
-import { pathToFileURL } from "node:url";
 import type { Message } from "@earendil-works/pi-ai";
 import { installRunnerHttpDispatcher } from "./runner-http-dispatcher.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
@@ -14,7 +12,6 @@ import { updateActiveRunIndex } from "./active-run-index.ts";
 import { createChildTranscriptWriter, type ChildTranscriptWriter } from "../../shared/child-transcript.ts";
 import { closeSteerInbox, closeStopInbox, consumeInterruptRequest, consumeSteerRequests, consumeStopRequestPayloads, deliverInterruptRequest, deliverStopRequest, deliverTimeoutRequest, watchAsyncControlInbox, type SteerRequest, type StopRequest } from "./control-channel.ts";
 import { appendJsonl as appendRawJsonl, formatOutputArtifactContent, getArtifactPaths, writeArtifact, writeMetadata } from "../../shared/artifacts.ts";
-import { PI_CODING_AGENT_PACKAGE, resolveInstalledPiPackageRoot } from "../shared/pi-spawn.ts";
 import { preflightLaunchCwd } from "../shared/launch-cwd.ts";
 import { captureSingleOutputSnapshot, extractChildWrittenOutput, finalizeSingleOutput, formatSavedOutputReference, injectOutputPathSystemPrompt, injectSingleOutputInstruction, resolveSingleOutput, type SingleOutputSnapshot } from "../shared/single-output.ts";
 import { runSetupCommand } from "../shared/worktree-setup-command.ts";
@@ -90,7 +87,8 @@ import { clearStructuredOutputCaptures, createStructuredOutputFileCapture, creat
 import { formatMidToolExitError, isOrdinaryToolForMidToolExit, isUnexplainedProcessSignal } from "../shared/process-signal.ts";
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence } from "../shared/mutation-evidence.ts";
-import { unavailableMutationSnapshot as snapshotTrackedMutations } from "../../shared/phase-one.ts";
+import { unavailableMutationSnapshot } from "../../shared/phase-one.ts";
+import { snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent } from "../shared/nested-events.ts";
@@ -118,7 +116,7 @@ import type { TokenUsage } from "../../shared/types.ts";
 import {
 	cleanupWorktrees,
 	createWorktrees,
-	withWorktreeTransaction,
+	withWorktreeFinalization,
 	WorktreeSetupError,
 	type WorktreeSetupProgress,
 	diffWorktrees,
@@ -141,7 +139,7 @@ import { asyncStatusChildIdentity } from "../shared/child-identity.ts";
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { effectiveToolTimeoutMs, formatToolTimeoutMessage, toolTimeoutCallKey } from "../shared/tool-timeout.ts";
 import { usageBudgetExceededMessage, usageBudgetState } from "../shared/usage-budget.ts";
-import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
+import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, resolveManagedWorktreeReference, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import type { SessionLeaseRequest } from "../shared/session-lease.ts";
 import { buildExternalCliPrompt, runExternalCli } from "../shared/external-cli-runner.ts";
@@ -392,21 +390,6 @@ function isBlockingSupervisorTool(toolName: string | undefined, args: unknown): 
 	return toolName === "intercom" && (args as Record<string, unknown>).action === "ask";
 }
 
-function findLatestSessionFile(sessionDir: string): string | null {
-	try {
-		const files = fs
-			.readdirSync(sessionDir)
-			.filter((f) => f.endsWith(".jsonl"))
-			.map((f) => path.join(sessionDir, f));
-		if (files.length === 0) return null;
-		files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-		return files[0] ?? null;
-	} catch {
-		// Session lookup is optional metadata.
-		return null;
-	}
-}
-
 function emptyUsage(): Usage {
 	return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 };
 }
@@ -513,52 +496,6 @@ function formatChildFailureDiagnostic(input: {
 	return `${baseError.slice(0, Math.max(0, errorLimit))}${context ? `\n${context}` : ""}`;
 }
 
-function resolvePiPackageRootFallback(): string {
-	const root = resolveInstalledPiPackageRoot();
-	if (root) return root;
-	throw new Error(`Could not resolve ${PI_CODING_AGENT_PACKAGE} package root`);
-}
-
-async function exportSessionHtml(sessionFile: string, outputDir: string, piPackageRoot?: string): Promise<string> {
-	const pkgRoot = piPackageRoot ?? resolvePiPackageRootFallback();
-	const exportModulePath = path.join(pkgRoot, "dist", "core", "export-html", "index.js");
-	const moduleUrl = pathToFileURL(exportModulePath).href;
-	const mod = await import(moduleUrl);
-	const exportFromFile = (mod as { exportFromFile?: (inputPath: string, options?: { outputPath?: string }) => string })
-		.exportFromFile;
-	if (typeof exportFromFile !== "function") {
-		throw new Error("exportFromFile not available");
-	}
-	const outputPath = path.join(outputDir, `${path.basename(sessionFile, ".jsonl")}.html`);
-	return exportFromFile(sessionFile, { outputPath });
-}
-
-function createShareLink(htmlPath: string): { shareUrl: string; gistUrl: string } | { error: string } {
-	try {
-		const auth = spawnSync("gh", ["auth", "status"], { encoding: "utf-8", windowsHide: true });
-		if (auth.status !== 0) {
-			return { error: "GitHub CLI is not logged in. Run 'gh auth login' first." };
-		}
-	} catch {
-		return { error: "GitHub CLI (gh) is not installed." };
-	}
-
-	try {
-		const result = spawnSync("gh", ["gist", "create", htmlPath], { encoding: "utf-8", windowsHide: true });
-		if (result.status !== 0) {
-			const err = (result.stderr || "").trim() || "Failed to create gist.";
-			return { error: err };
-		}
-		const gistUrl = (result.stdout || "").trim();
-		const gistId = gistUrl.split("/").pop();
-		if (!gistId) return { error: "Failed to parse gist ID." };
-		const shareUrl = `https://shittycodingagent.ai/session/?${gistId}`;
-		return { shareUrl, gistUrl };
-	} catch (err) {
-		return { error: String(err) };
-	}
-}
-
 function formatDuration(ms: number): string {
 	if (ms < 1000) return `${ms}ms`;
 	if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
@@ -584,8 +521,6 @@ function writeRunLog(
 		truncated: boolean;
 		artifactsDir?: string;
 		sessionFile?: string;
-		shareUrl?: string;
-		shareError?: string;
 	},
 	write: (filePath: string, content: string) => void = (filePath, content) => fs.writeFileSync(filePath, content, "utf-8"),
 ): void {
@@ -598,8 +533,6 @@ function writeRunLog(
 	lines.push(`- **Ended:** ${new Date(input.endedAt).toISOString()}`);
 	lines.push(`- **Duration:** ${formatDuration(input.endedAt - input.startedAt)}`);
 	if (input.sessionFile) lines.push(`- **Session:** ${input.sessionFile}`);
-	if (input.shareUrl) lines.push(`- **Share:** ${input.shareUrl}`);
-	if (input.shareError) lines.push(`- **Share error:** ${input.shareError}`);
 	if (input.artifactsDir) lines.push(`- **Artifacts:** ${input.artifactsDir}`);
 	lines.push("");
 	lines.push("## Steps");
@@ -1082,7 +1015,7 @@ export async function runSingleStepInner(
 	let toolBudget = step.toolBudget ? initialToolBudgetState(step.toolBudget) : undefined;
 	let toolBudgetBlocked = false;
 	let actualLaunchContractDigest = step.launchContractDigest;
-	const mutationSnapshot = step.machine ? { source: "tracked-files" as const, trackedOnly: true as const, cwd: step.cwd ?? ctx.cwd, dirtyFiles: [], fingerprints: {}, unavailable: "Local Git evidence is not authoritative for a pane-native remote run." } : snapshotTrackedMutations(step.cwd ?? ctx.cwd);
+	let mutationSnapshot = unavailableMutationSnapshot(step.cwd ?? ctx.cwd);
 	let finalMutationEvidence = collectTrackedMutationEvidence(mutationSnapshot, step.cwd ?? ctx.cwd);
 
 	let contextOverflow = false;
@@ -1136,7 +1069,13 @@ export async function runSingleStepInner(
 			});
 		} catch (error) { throw error; }
 		if (step.outputPath) launch.config.workspaceWriter = true;
-		launch.session.onAdmitted = () => { outputSnapshot = captureSingleOutputSnapshot(step.outputPath); };
+		launch.session.onAdmitted = () => {
+			if (step.managedWorktreeReference && fs.realpathSync(resolveManagedWorktreeReference(step.managedWorktreeReference, launch.config.writerIdentity?.rootSessionId)) !== fs.realpathSync(step.cwd ?? ctx.cwd)) {
+				throw new Error("Retained managed worktree cwd changed before admission");
+			}
+			outputSnapshot = captureSingleOutputSnapshot(step.outputPath);
+			if (step.gitEvidence) mutationSnapshot = snapshotTrackedMutations(step.cwd ?? ctx.cwd);
+		};
 		if (effectiveStructuredOutput && launch.config.structuredOutput) {
 			// The runner reads the value back from the runtime's files after the run.
 			launch.config.structuredOutput.capture = createStructuredOutputFileCapture(effectiveStructuredOutput);
@@ -1345,7 +1284,7 @@ export async function runSingleStepInner(
 			afterCompactionSettlement: run.afterCompactionSettlement === true,
 		} : undefined;
 		const fileMutationEffect = missingRequiredOutputAfterMutation ? { status: "observed" as const, attempted: true as const, evidence: mutationEvidence } : undefined;
-		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, structuredOutputFailed: structuredError ? true : undefined, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic ? { effects: { ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
+		finalResult = { ...run, exitCode: effectiveExitCode, model: candidate ?? run.model, error, structuredOutput, structuredOutputFailed: structuredError ? true : undefined, runtimeAcknowledgedExtensions, ...(step.agentContract ? { agentContract: step.agentContract } : {}), ...(fileMutationEffect || settlementDiagnostic || step.gitEvidence ? { effects: { ...(step.gitEvidence ? { trackedMutations: mutationEvidence } : {}), ...(fileMutationEffect ? { fileMutation: fileMutationEffect } : {}), ...(settlementDiagnostic ? { settlementDiagnostic } : {}) } } : {}) } as RunChildSessionResult;
 		if (run.stopped || run.timedOut || ctx.timeoutSignal?.aborted || ctx.stopSignal?.aborted || ctx.skipAcceptance?.()) break singleLaunch;
 		if (effectiveExitCode === 0 && !error) break singleLaunch;
 		const recovery = planAbortRecovery({
@@ -1623,9 +1562,6 @@ type RunnerStatusPayload = Omit<AsyncStatus, "steps" | "parallelGroups" | "pid" 
 	steps: RunnerStatusStep[];
 	lastUpdate: number;
 	artifactsDir?: string;
-	shareUrl?: string;
-	gistUrl?: string;
-	shareError?: string;
 	error?: string;
 };
 
@@ -1750,7 +1686,7 @@ function prepareParallelTaskRun(
 	const { cwd: _taskCwd, ...taskForRun } = task;
 	const boundTask = bindWorktreeCwd(taskForRun, worktreeSetup.worktrees[taskIndex]!.agentCwd);
 	return {
-		taskForRun: boundTask,
+		taskForRun: { ...boundTask, gitEvidence: true },
 		taskCwd: worktreeSetup.worktrees[taskIndex]!.agentCwd,
 	};
 }
@@ -1891,7 +1827,7 @@ export async function runSubagent(
 	// cannot distinguish them from steps that really ran.
 	const launchedFlatIndices = new Set<number>();
 	const overallStartTime = Date.now();
-	const shareEnabled = config.share === true;
+	if (config.share === true) throw new Error("Session sharing through Gist is excluded from Tau.");
 	const asyncDir = config.asyncDir;
 	const handoffWorkflowKey = config.workflowKey;
 	const handoffChildRunId = handoffWorkflowKey ? id : undefined;
@@ -2024,7 +1960,6 @@ export async function runSubagent(
 		}
 	}
 	const sessionEnabled = Boolean(config.sessionDir)
-		|| shareEnabled
 		|| flatSteps.some((step) => Boolean(step.sessionFile));
 	if (config.runnerProcessInstanceId) {
 		for (const step of initialStatusSteps) {
@@ -3247,12 +3182,17 @@ export async function runSubagent(
 		// Publish the sticky proof independently of in-process child writer counts.
 		writeAtomicJson(processTerminalPath(asyncDir), proof);
 	};
+	const worktreeWriterIdentity = {
+		rootSessionId: config.inheritedChildRuntime?.writerIdentity?.rootSessionId ?? config.sessionId ?? "",
+		runId: id,
+		ancestors: config.inheritedChildRuntime?.writerIdentity ? [...config.inheritedChildRuntime.writerIdentity.ancestors, config.inheritedChildRuntime.writerIdentity.runId] : [],
+	};
 	const finalizeWorktree = async (setup: WorktreeSetup, stepIndex: number, flatStartIndex: number, action: () => void, deadlineAt?: number): Promise<void> => {
 		let admitted = false;
 		try {
 			await Promise.all([...externalActivityEvidence.values()].map((evidence) => evidence.probeInFlight).filter((probe): probe is Promise<void> => probe !== undefined));
 			if (periodicGitProbeFailure) throw periodicGitProbeFailure.error;
-			await withWorktreeTransaction(() => {
+			await withWorktreeFinalization(setup, () => {
 				if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new Error("Run deadline expired before worktree cleanup");
 				admitted = true;
 				action();
@@ -3266,7 +3206,7 @@ export async function runSubagent(
 				mode: (config.resultMode ?? statusPayload.mode) === "parallel" ? "parallel" : (config.resultMode ?? statusPayload.mode) === "single" ? "single" : "chain",
 				source: "async", cwd, stepIndex, flatStartIndex, setup, diffs: [], results: [],
 				cleanup: { state: "partial", pruned: false, errors: [reason], tasks: setup.worktrees.map((worktree) => ({
-					index: worktree.index, path: worktree.path, branch: worktree.branch, provider: worktree.provider, naming: worktree.naming,
+					ownership: worktree.ownership, index: worktree.index, path: worktree.path, branch: worktree.branch, provider: worktree.provider, naming: worktree.naming,
 					worktreeRemoved: false, branchRemoved: false, preserved: true, reason,
 				})) },
 			});
@@ -3999,6 +3939,7 @@ export async function runSubagent(
 				}
 				try {
 					worktreeSetup = await createWorktrees(cwd, `${id}-s${stepIndex}`, group.parallel.length, omitUndefinedProperties({
+						writerIdentity: worktreeWriterIdentity,
 						signal: setupSignal,
 						deadlineAt: config.deadlineAt,
 						agents: group.parallel.map((task) => task.agent),
@@ -4440,6 +4381,7 @@ export async function runSubagent(
 			if (seqStep.worktree) {
 				try {
 					singleWorktreeSetup = await createWorktrees(cwd, `${id}-s${stepIndex}`, 1, omitUndefinedProperties({
+						writerIdentity: worktreeWriterIdentity,
 						signal: setupSignal,
 						deadlineAt: config.deadlineAt,
 						agents: [seqStep.agent],
@@ -4533,7 +4475,7 @@ export async function runSubagent(
 
 			flushPendingStepSteers(flatIndex);
 			const executionStep = singleWorktreeSetup
-				? bindWorktreeCwd({ ...seqStep, cwd: singleCwd }, singleCwd)
+				? bindWorktreeCwd({ ...seqStep, cwd: singleCwd, gitEvidence: true }, singleCwd)
 				: seqStep;
 			let singleResult: Awaited<ReturnType<typeof runSingleStepWithTimeout>>;
 			try {
@@ -4842,36 +4784,6 @@ export async function runSubagent(
 		: resultMode === "parallel"
 			? `parallel:${finalFlatAgents.join("+")}`
 			: `chain:${finalFlatAgents.join("->")}`;
-	let sessionFile: string | undefined;
-	let shareUrl: string | undefined;
-	let gistUrl: string | undefined;
-	let shareError: string | undefined;
-
-	if (shareEnabled) {
-		sessionFile = config.sessionDir
-			? (findLatestSessionFile(config.sessionDir) ?? undefined)
-			: undefined;
-		if (!sessionFile && latestSessionFile) {
-			sessionFile = latestSessionFile;
-		}
-		if (sessionFile) {
-			try {
-				const exportDir = config.sessionDir ?? path.dirname(sessionFile);
-				const htmlPath = await exportSessionHtml(sessionFile, exportDir, config.piPackageRoot);
-				const share = createShareLink(htmlPath);
-				if ("error" in share) shareError = share.error;
-				else {
-					shareUrl = share.shareUrl;
-					gistUrl = share.gistUrl;
-				}
-			} catch (err) {
-				shareError = String(err);
-			}
-		} else {
-			shareError = "Session file not found.";
-		}
-	}
-
 	if (activityTimer) {
 		clearInterval(activityTimer);
 		activityTimer = undefined;
@@ -4910,7 +4822,7 @@ export async function runSubagent(
 	statusPayload.state = stopped || signalTerminated ? "stopped" : timedOut || usageBudgetExceeded ? "failed" : interrupted ? "paused" : results.every((r) => r.success) ? "complete" : partialWithEvidence ? "partial" : "failed";
 	closeSteerInbox(asyncDir, statusPayload.state, (filePath, payload) => runPersistence.write(filePath, payload));
 	for (const request of consumeSteerRequests(asyncDir)) deliverSteerRequest(request);
-	const effectiveSessionFile = sessionFile ?? latestSessionFile;
+	const effectiveSessionFile = latestSessionFile;
 	const steeringLifecycle = steeringStatus(statusPayload);
 	for (const request of steeringLifecycle.recent) {
 		let changed = false;
@@ -4953,9 +4865,6 @@ export async function runSubagent(
 	if (singleRuntimeAcknowledgedExtensions) statusPayload.runtimeAcknowledgedExtensions = singleRuntimeAcknowledgedExtensions;
 	setOptionalProperty(statusPayload, "totalCost", finalTotalCost);
 	setOptionalProperty(statusPayload, "usageBudget", usageBudgetState(config.usageBudget, currentUsageTotals()));
-	setOptionalProperty(statusPayload, "shareUrl", shareUrl);
-	setOptionalProperty(statusPayload, "gistUrl", gistUrl);
-	setOptionalProperty(statusPayload, "shareError", shareError);
 	if ((statusPayload.state === "failed" || statusPayload.state === "partial") && !statusPayload.error) {
 		const concreteFailure = results.find(concreteFailureResult);
 		const failedStep = concreteFailure ? undefined : statusPayload.steps.find((s) => s.status === "failed");
@@ -5057,9 +4966,6 @@ export async function runSubagent(
 			completionOwnerId: config.completionOwnerId,
 			sessionFile: effectiveSessionFile,
 			intercomTarget: config.controlIntercomTarget,
-			shareUrl,
-			gistUrl,
-			shareError,
 			...(taskIndex !== undefined && { taskIndex }),
 			...(totalTasks !== undefined && { totalTasks }),
 		}, (filePath, payload) => { writeAsyncResultFile(filePath, payload as Record<string, unknown>); });
@@ -5129,8 +5035,6 @@ export async function runSubagent(
 		truncated,
 		artifactsDir,
 		sessionFile: effectiveSessionFile,
-		shareUrl,
-		shareError,
 	}), (filePath, content) => runPersistence.write(filePath, { content }, (_path, payload) => {
 		fs.writeFileSync(_path, (payload as { content: string }).content, "utf-8");
 	}));

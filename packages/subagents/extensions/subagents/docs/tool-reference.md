@@ -10,6 +10,22 @@ subagent({agent:"oracle", task:"Challenge the chosen design", context:"fork"});
 
 Background dispatch returns run identity/artifact locations, not task success. Foreground returns the completed result. Model selection is explicit call → profile → coordinator at launch, with no hidden provider/model/runner fallback. Missing tools and failed required extensions are errors.
 
+## Native worktree isolation
+
+Add `worktree:true` or `isolation:"worktree"`, optionally `baseRef:"refs/heads/main"`. The source must be clean; allocation uses Git only. Distinct worktrees permit concurrent writers while same-cwd writers remain serialized. Results expose `parallelHandoff` with retained paths, branches and snapshot patches. No automatic merge or cleanup occurs. See [worktrees](worktrees.md), including cleanup authorization and shared-resource limits.
+
+## Lanes and retained work
+
+```js
+subagent({action:"lane.status", handoffPath:"/absolute/path/parallel-handoff.json"});
+subagent({action:"worktree.cleanup", mode:"plan", repo:"/absolute/path/repo"});
+subagent({action:"worktree.discard", handoffPath:"/absolute/path/parallel-handoff.json"});
+```
+
+The last action is destructive and asks for confirmation by default. Unknown/live owners are retained even if authorized. `worktree.cleanup` only writes a bounded plan artifact; there is no apply mode. Supply `handoffPath` to inspect a particular handoff rather than discovering local metadata.
+
+`lane.recordMerge` and `lane.recordSupersession` register supplied evidence for `laneId` in `handoffPath`; they do not merge, fetch GitHub data or authorize deletion. Attestations are bound to current handoff facts and become stale when those facts change. See [worktrees](worktrees.md).
+
 ## Retained children
 
 Use `action:"status"` with `id`, optionally `view:"transcript"` and bounded `lines`. `view:"fleet"` gives the fleet snapshot. `debug.run` exposes diagnostic references. `children.list` is the workflow child inventory, not a universal list of direct children.
@@ -28,7 +44,7 @@ Use `output` to bind a report; `outputMode:"file-only"` requires a path. `output
 
 ## Discovery and management
 
-`list`, `get`, `models`, `guide`, `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset` and profile refinement provide native agent management. Custom profiles still pass phase-one admission and capability checks. Deferred options/actions fail explicitly rather than being silently ignored.
+`list`, `get`, `models`, `guide`, `create`, `update`, `delete`, `eject`, `disable`, `enable`, `reset` and profile refinement provide native agent management. Custom profiles still pass native admission and capability checks. Deferred options/actions fail explicitly rather than being silently ignored.
 
 ## Pi UI
 

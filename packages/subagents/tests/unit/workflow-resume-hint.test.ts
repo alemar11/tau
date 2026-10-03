@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
+import { createWorktrees, cleanupWorktrees } from "../../extensions/subagents/src/runs/shared/worktree.ts";
 import { afterEach, describe, it } from "node:test";
 import { createSubagentExecutor } from "../../extensions/subagents/src/runs/foreground/subagent-executor.ts";
 import { resolveAsyncResumeTarget } from "../../extensions/subagents/src/runs/background/async-resume.ts";
@@ -88,10 +90,14 @@ function writeRetainedChild(input: {
 	}), "utf-8");
 }
 
-function writeManagedWorktreeHandoff(root: string, childRunId: string): void {
+async function writeManagedWorktreeHandoff(root: string, childRunId: string): Promise<void> {
 	const childDir = path.join(DIRS.async, childRunId);
-	const worktreePath = path.join(root, `${childRunId}-worktree`);
-	fs.mkdirSync(worktreePath, { recursive: true });
+	const git = (...args: string[]) => execFileSync("git", ["-C", root, "-c", `core.hooksPath=${os.devNull}`, ...args], { stdio: "pipe", env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull } });
+	git("init", "-q");
+	fs.writeFileSync(path.join(root, ".git", "info", "exclude"), "*\n");
+	git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-qm", "Fixture");
+	const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "tau-resume-trees-")); cleanupRoots.push(baseDir);
+	const setup = await createWorktrees(root, childRunId, 1, { baseDir, writerIdentity: { rootSessionId: "session-1644", runId: childRunId, ancestors: [] } });
 	fs.writeFileSync(parallelHandoffPath(childDir), JSON.stringify({
 		version: 1,
 		runId: childRunId,
@@ -102,17 +108,17 @@ function writeManagedWorktreeHandoff(root: string, childRunId: string): void {
 		updatedAt: 200,
 		groups: [{
 			stepIndex: 0,
-			baseCommit: "a".repeat(40),
-			repoRoot: root,
+			baseCommit: setup.baseCommit,
+			repoRoot: setup.cwd,
 			children: [{
 				index: 0,
 				taskIndex: 0,
 				agent: "worker",
 				status: "completed",
 				summary: "done",
-				patch: { path: path.join(root, "patch.diff"), branch: "work", changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
+				patch: { path: path.join(root, "patch.diff"), branch: setup.worktrees[0].branch, changed: false, diffStat: "", filesChanged: 0, insertions: 0, deletions: 0 },
 			}],
-			cleanup: { state: "partial", pruned: false, tasks: [{ index: 0, path: worktreePath, branch: "work", worktreeRemoved: false, branchRemoved: false }] },
+			cleanup: cleanupWorktrees(setup),
 		}],
 	}), "utf-8");
 }
@@ -211,7 +217,7 @@ describe("workflow keyed resume recovery hint", () => {
 		cleanupRoots.push(root);
 		const { childRunId } = makeIds("managed-base-ref");
 		writeRetainedChild({ root, childRunId, sessionId: "session-1644", mode: "workflow" });
-		writeManagedWorktreeHandoff(root, childRunId);
+		await writeManagedWorktreeHandoff(root, childRunId);
 
 		const result = await createExecutor(createState("session-1644"), root).execute(
 			`managed-worktree-resume-${Date.now()}-${Math.random().toString(16).slice(2)}`,

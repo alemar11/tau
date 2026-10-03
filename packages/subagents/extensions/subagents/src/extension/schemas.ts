@@ -248,7 +248,7 @@ const SubagentParamProperties = {
 	machine: Type.Optional(Type.String({ minLength: 1, maxLength: 128, description: "Herdr saved machine id or label; runs an external CLI agent there. cwd then means the directory on that machine." })),
 	artifacts: Type.Optional(Type.Boolean({ description: "Debug artifacts; default true." })),
 	includeProgress: Type.Optional(Type.Boolean({ description: "Full result progress; default false." })),
-	share: Type.Optional(Type.Boolean({ description: "Upload session to GitHub Gist; default false." })),
+	share: Type.Optional(Type.Boolean({ description: "Session sharing is excluded; only false is supported." })),
 	sessionDir: Type.Optional(
 		Type.String({ description: "Session log directory; default temp, independent of share." }),
 	),

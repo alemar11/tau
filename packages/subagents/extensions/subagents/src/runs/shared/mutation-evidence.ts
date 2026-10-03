@@ -1,62 +1,38 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import * as fs from "node:fs";
 import * as os from "node:os";
-import * as path from "node:path";
+import { gitEnvironment } from "./worktree.ts";
 import type { ArtifactPaths, TimeoutRecoveryProjection, TimeoutRecoverySummary, TrackedMutationEvidence, TrackedMutationFingerprint, TrackedMutationSnapshot } from "../../shared/types.ts";
 
 const MAX_TRACKED_PATHS = 500;
 const MAX_HASH_BYTES = 1024 * 1024;
+const MAX_DIFF_BYTES = 8 * 1024 * 1024;
+const EVIDENCE_BUDGET_MS = 5000;
 const MAX_TIMEOUT_FILES = 20;
 
 function gitArguments(args: string[]): string[] {
 	// Mutation evidence must not block child startup on a stale fsmonitor daemon.
-	return ["-c", "core.fsmonitor=false", ...args];
+	return ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${os.devNull}`, ...args];
 }
 
-function gitOutput(cwd: string, args: string[], maxBuffer = MAX_HASH_BYTES): string {
-	return execFileSync("git", gitArguments(args), { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer, windowsHide: true });
+function gitOutput(cwd: string, args: string[], maxBuffer: number, deadlineAt: number): string {
+	const timeout = deadlineAt - Date.now();
+	if (timeout <= 0) throw new Error("Git mutation evidence exceeded its time budget");
+	return execFileSync("git", gitArguments(args), { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], maxBuffer, windowsHide: true, timeout, killSignal: "SIGKILL", env: gitEnvironment() });
 }
 
 function splitNul(output: string): string[] {
 	return output.split("\0").filter((part) => part.length > 0);
 }
 
-function hashLargeDiff(cwd: string, relativePath: string): string {
-	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tau-subagents-tracked-diff-"));
-	const diffPath = path.join(tempDir, "diff.patch");
-	try {
-		execFileSync("git", gitArguments(["diff", "--no-ext-diff", "--binary", `--output=${diffPath}`, "HEAD", "--", relativePath]), { cwd, stdio: "ignore", windowsHide: true });
-		const hash = createHash("sha256");
-		const buffer = Buffer.allocUnsafe(64 * 1024);
-		const fd = fs.openSync(diffPath, "r");
-		try {
-			for (;;) {
-				const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, null);
-				if (bytesRead === 0) break;
-				hash.update(buffer.subarray(0, bytesRead));
-			}
-		} finally {
-			fs.closeSync(fd);
-		}
-		return hash.digest("hex");
-	} finally {
-		fs.rmSync(tempDir, { recursive: true, force: true });
-	}
-}
-
-function listChangedTrackedFiles(cwd: string): { paths: string[]; truncated: boolean } {
-	const paths = splitNul(gitOutput(cwd, ["diff", "--no-ext-diff", "--name-only", "-z", "HEAD", "--"], MAX_HASH_BYTES));
+function listChangedTrackedFiles(cwd: string, baseCommit: string, deadlineAt: number): { paths: string[]; truncated: boolean } {
+	const paths = splitNul(gitOutput(cwd, ["diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", baseCommit, "--"], MAX_HASH_BYTES, deadlineAt));
 	return { paths: paths.slice(0, MAX_TRACKED_PATHS), truncated: paths.length > MAX_TRACKED_PATHS };
 }
 
-function fingerprintPath(cwd: string, relativePath: string): TrackedMutationFingerprint {
-	try {
-		const diff = gitOutput(cwd, ["diff", "--no-ext-diff", "--binary", "HEAD", "--", relativePath], MAX_HASH_BYTES);
-		return { kind: "diff", digest: createHash("sha256").update(diff).digest("hex") };
-	} catch {
-		return { kind: "diff", digest: hashLargeDiff(cwd, relativePath) };
-	}
+function fingerprintPath(cwd: string, relativePath: string, baseCommit: string, deadlineAt: number): TrackedMutationFingerprint {
+	const diff = gitOutput(cwd, ["diff", "--no-ext-diff", "--no-textconv", "--binary", baseCommit, "--", relativePath], MAX_DIFF_BYTES, deadlineAt);
+	return { kind: "diff", digest: createHash("sha256").update(diff).digest("hex") };
 }
 
 function sameFingerprint(left: TrackedMutationFingerprint | undefined, right: TrackedMutationFingerprint): boolean {
@@ -66,10 +42,13 @@ function sameFingerprint(left: TrackedMutationFingerprint | undefined, right: Tr
 
 export function snapshotTrackedMutations(cwd: string): TrackedMutationSnapshot {
 	try {
-		const changed = listChangedTrackedFiles(cwd);
+		const deadlineAt = Date.now() + EVIDENCE_BUDGET_MS;
+		const gitRoot = gitOutput(cwd, ["rev-parse", "--show-toplevel"], MAX_HASH_BYTES, deadlineAt).trim();
+		const baseCommit = gitOutput(gitRoot, ["rev-parse", "HEAD"], MAX_HASH_BYTES, deadlineAt).trim();
+		const changed = listChangedTrackedFiles(gitRoot, baseCommit, deadlineAt);
 		const fingerprints: Record<string, TrackedMutationFingerprint> = {};
-		for (const file of changed.paths) fingerprints[file] = fingerprintPath(cwd, file);
-		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: changed.paths, fingerprints, truncated: changed.truncated };
+		for (const file of changed.paths) fingerprints[file] = fingerprintPath(gitRoot, file, baseCommit, deadlineAt);
+		return { source: "tracked-files", trackedOnly: true, cwd, gitRoot, baseCommit, dirtyFiles: changed.paths, fingerprints, truncated: changed.truncated };
 	} catch (error) {
 		return { source: "tracked-files", trackedOnly: true, cwd, dirtyFiles: [], fingerprints: {}, unavailable: error instanceof Error ? error.message : String(error) };
 	}
@@ -80,7 +59,11 @@ export function collectTrackedMutationEvidence(snapshot: TrackedMutationSnapshot
 		return { source: "tracked-files", trackedOnly: true, changedFiles: [], attemptedMutation: false, unavailable: snapshot.unavailable };
 	}
 	try {
-		const current = listChangedTrackedFiles(cwd);
+		const deadlineAt = Date.now() + EVIDENCE_BUDGET_MS;
+		const gitRoot = gitOutput(cwd, ["rev-parse", "--show-toplevel"], MAX_HASH_BYTES, deadlineAt).trim();
+		if (snapshot.gitRoot && snapshot.gitRoot !== gitRoot) throw new Error("Git repository changed since admission");
+		const baseCommit = snapshot.baseCommit ?? "HEAD";
+		const current = listChangedTrackedFiles(gitRoot, baseCommit, deadlineAt);
 		const startDirty = new Set(snapshot.dirtyFiles);
 		const candidates = new Set([...snapshot.dirtyFiles, ...current.paths]);
 		const changedFiles: string[] = [];
@@ -89,7 +72,7 @@ export function collectTrackedMutationEvidence(snapshot: TrackedMutationSnapshot
 				if (!snapshot.truncated) changedFiles.push(file);
 				continue;
 			}
-			if (!sameFingerprint(snapshot.fingerprints[file], fingerprintPath(cwd, file))) changedFiles.push(file);
+			if (!sameFingerprint(snapshot.fingerprints[file], fingerprintPath(gitRoot, file, baseCommit, deadlineAt))) changedFiles.push(file);
 		}
 		changedFiles.sort();
 		return {

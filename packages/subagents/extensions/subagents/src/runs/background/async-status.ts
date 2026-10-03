@@ -42,7 +42,7 @@ interface AsyncRunStepSummary {
 	lane?: AsyncJobStep["lane"];
 	worktreePath?: string;
 	branch?: string;
-	provider?: "native" | "worktrunk";
+	provider?: "native";
 	naming?: WorktreeNaming;
 	runId?: string;
 	outputName?: string;

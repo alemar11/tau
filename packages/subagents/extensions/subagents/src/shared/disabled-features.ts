@@ -92,7 +92,8 @@ export function resolveDisabledFeatureSurface(config: FeatureConfig): DisabledFe
 		for (const param of surface.params) if (feature === "workflow-scripts" || !params.has(param)) params.set(param, surface.disabledBy);
 		for (const action of surface.actions) actions.set(action, surface.disabledBy);
 	}
-	for (const param of ["worktree", "worktreeProvider", "worktreeBranchPrefix", "isolation", "baseRef", "acceptance", "intercomBridge", "share"]) params.set(param, "Tau phase 1");
+	for (const param of ["worktreeProvider", "worktreeBranchPrefix", "acceptance", "intercomBridge"]) params.set(param, "Tau native policy");
+	params.set("share", "Tau excluded session sharing");
 	return { features, params, actions };
 }
 

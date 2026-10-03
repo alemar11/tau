@@ -2,14 +2,14 @@
  * Subagent Tool
  *
  * Full-featured subagent with sync and async modes.
- * - Sync (default): Streams output, renders markdown, tracks usage
- * - Async: Background execution, emits events when done
+ * - Sync: Streams output, renders markdown, tracks usage
+ * - Async (default): Background execution, emits events when done
  *
  * Public execution mode: workflow (workflow: true reply block, script path, or named resource)
  * Toggle: async parameter (default: true; set asyncByDefault:false in config.json to opt out)
  *
- * Config file: ~/.pi/agent/extensions/subagent/config.json
- *   { "asyncByDefault": true, "defaultSubagentContext": "fork", "forkContext": { "mode": "pruned", "model": "provider/model" }, "forceTopLevelAsync": true, "maxSubagentDepth": 1, "intercomBridge": { "mode": "always", "instructionFile": "./intercom-bridge.md" }, "worktreeSetupHook": "./scripts/setup-worktree.mjs" }
+ * Config file: ~/.pi/agent/tau-subagents/config.json
+ *   { "asyncByDefault": true, "worktreeProvider": "native", "maxSubagentDepth": 2 }
  */
 
 import { randomUUID } from "node:crypto";

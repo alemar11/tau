@@ -4,7 +4,7 @@ import type { ExtensionConfig, ToolDescriptionMode } from "../shared/types.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
 import type { DisabledFeatureSurface } from "../shared/disabled-features.ts";
 
-// Only the phase-one surface is advertised; deferred source is not a capability promise.
+// Advertise only enabled native features; deferred source is not a capability promise.
 export const SUBAGENT_SAFETY_GUIDANCE = `Delegate only when authorized by the operator or applicable instructions.
 Background is the default; async:false explicitly waits. Dispatch is not completion: consume final results at dependency barriers.
 One writer per canonical cwd and root session is admitted FIFO, including nested children. Queue time counts against the deadline. A conflicting descendant writer is rejected. Readers may overlap, without a snapshot or OS sandbox. Uncertain writers retain ownership.
@@ -16,7 +16,7 @@ export const DEFAULT_SUBAGENT_TOOL_DESCRIPTION = `Tau native Pi delegation. Firs
 One child: {agent:'worker',task:'...',async:true}. Management/control: {action:'status',id:'...'}; list/get/models/guide/validate, children.list, debug.run, steer/interrupt/stop/resume/dismiss, and agent create/update/delete/eject/disable/enable/reset/refine.
 For coordinated work, write one JavaScript statement body in a fenced js workflow block and call {workflow:true}, or use {workflow:'./workflow.js'}. Named workflow resources are also supported. Validate with action:'validate' before launch. Use stable keys and await runs.run(key,{agent,task}) before reading output; runs.all([{key,agent,task},...]) yields an ordered result array. runs.status, runs.steer, runs.ref, runs.refs, emit, console and frozen args are available. Scripts have no filesystem or shell access. Do not use nested async functions or leave launch promises unobserved. Explicit child async:true returns only a running receipt.
 Bind reports with output and structured output with outputSchema, not task prose. Native tools and explicitly configured extensions/skills are resolved before execution. Research uses Tau Web: web_search, fetch_web_content and get_cached_web_content. A fresh auditor must fetch cited URLs itself; another session's cache IDs grant no access.
-Git/worktrees, external runners/terminals, optional integrations, missions, scheduler, watchdog, host steps and acceptance gates are unavailable in phase 1 and are rejected.
+Use worktree:true (or isolation:'worktree') for native Git isolation, optionally baseRef:'refs/heads/main'. A clean Git source is required; never commit or stash implicitly to satisfy it. Writers on distinct worktrees may overlap. Worktrees and branches are retained by default; no automatic merge, removal or upload. Inspect parallelHandoff for paths and patch evidence. runs.lanes sequences stages within independent lanes; lane.status and lane.recordMerge/lane.recordSupersession inspect or record evidence, never merge. worktree.cleanup only plans; worktree.discard requires explicit authorization and provably settled managed writers. Worktrunk and Gist sharing are excluded. External runners/terminals, optional integrations, missions, scheduler, watchdog, host steps and acceptance gates remain deferred.
 Read {action:'guide',topic:'tool-reference'} or topic:'workflows' for details.
 
 ${SUBAGENT_SAFETY_GUIDANCE}`;

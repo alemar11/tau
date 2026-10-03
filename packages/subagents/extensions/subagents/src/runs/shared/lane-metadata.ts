@@ -100,7 +100,7 @@ export function normalizeWorktreeStatusReference(value: unknown, label = "worktr
 	if (value === undefined) return undefined;
 	assertPlainObject(value, label);
 	assertKnownFields(value, ["worktreePath", "branch", "provider", "naming"], label);
-	if (value.provider !== undefined && value.provider !== "native" && value.provider !== "worktrunk") throw new Error(`${label}.provider is invalid.`);
+	if (value.provider !== undefined && value.provider !== "native") throw new Error(`${label}.provider is invalid.`);
 	return {
 		worktreePath: boundedNonEmptyString(value.worktreePath, `${label}.worktreePath`, WORKTREE_STATUS_PATH_MAX_BYTES),
 		branch: boundedNonEmptyString(value.branch, `${label}.branch`, WORKTREE_STATUS_BRANCH_MAX_BYTES),

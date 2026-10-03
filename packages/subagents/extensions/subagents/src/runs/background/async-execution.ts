@@ -35,7 +35,7 @@ import { resolveToolTimeoutMs, toolTimeoutFromEnv } from "../shared/tool-timeout
 import { resolveModelScopesForAgent, type ModelScopeConfig } from "../shared/model-scope.ts";
 import { findModelInfo, resolveEffectiveThinking } from "../../shared/model-info.ts";
 import { assertThinkingWithinCeiling, intersectThinkingCeilings, type ThinkingLevel } from "../../shared/thinking-ceiling.ts";
-import { resolveExpectedWorktreeAgentCwd, resolveWorktreeProvider, shouldDeferWorktreeCwd, WORKTREE_AGENT_CWD_PLACEHOLDER } from "../shared/worktree.ts";
+import { resolveExpectedWorktreeAgentCwd, resolveWorktreeProvider } from "../shared/worktree.ts";
 import { buildWorkflowGraphSnapshot } from "../shared/workflow-graph.ts";
 import { ChainOutputValidationError, validateChainOutputBindings } from "../shared/chain-outputs.ts";
 import { createStructuredOutputRuntime } from "../shared/structured-output.ts";
@@ -258,6 +258,7 @@ interface AsyncChainParams {
 }
 
 interface AsyncSingleParams {
+	managedWorktreeReference?: SteeringRecoveryDescriptor["managedWorktreeReference"];
 	agent: string;
 	task?: string;
 	/** Raw caller-facing goal used only by the started event. */
@@ -935,11 +936,10 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	const availableModels = params.availableModels;
 	const runnerCwd = resolveChildCwd(ctx.cwd, cwd);
 	const launchMachine = params.machine;
-	let managedWorktreeProvider: "native" | "worktrunk" | undefined;
+	let managedWorktreeProvider: "native" | undefined;
 	try {
 		if (chain.some((step) => "worktree" in step && step.worktree === true)) {
-			const resolved = resolveWorktreeProvider(worktreeProvider, worktreeBaseDir);
-			managedWorktreeProvider = shouldDeferWorktreeCwd(worktreeProvider, worktreeBaseDir) ? "worktrunk" : resolved;
+			managedWorktreeProvider = resolveWorktreeProvider(worktreeProvider, worktreeBaseDir);
 		}
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
@@ -1283,9 +1283,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 				return {
 					parallel: s.parallel.map((t, taskIndex) => {
 						let behaviorCwd: string | undefined;
-						if (s.worktree && managedWorktreeProvider === "worktrunk") {
-							behaviorCwd = WORKTREE_AGENT_CWD_PLACEHOLDER;
-						} else if (s.worktree && managedWorktreeProvider === "native") {
+						if (s.worktree && managedWorktreeProvider === "native") {
 							try {
 								behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, taskIndex, worktreeBaseDir);
 							} catch {
@@ -1340,9 +1338,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			}
 			const sequential = s as SequentialStep;
 			let behaviorCwd: string | undefined;
-			if (sequential.worktree && managedWorktreeProvider === "worktrunk") {
-				behaviorCwd = WORKTREE_AGENT_CWD_PLACEHOLDER;
-			} else if (sequential.worktree && managedWorktreeProvider === "native") {
+			if (sequential.worktree && managedWorktreeProvider === "native") {
 				try {
 					behaviorCwd = resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s${stepIndex}`, 0, worktreeBaseDir);
 				} catch {
@@ -1397,7 +1393,7 @@ export function executeAsyncChain(
 	id: string,
 	params: AsyncChainParams,
 ): AsyncExecutionResult {
-	assertNativeExecution(params);
+	assertNativeExecution(params, true);
 	const {
 		chain,
 		agents,
@@ -1746,7 +1742,7 @@ export function executeAsyncSingle(
 	id: string,
 	params: AsyncSingleParams,
 ): AsyncExecutionResult | Promise<AsyncExecutionResult> {
-	assertNativeExecution(params);
+	assertNativeExecution(params, true);
 	assertNativeAgent(params.agentConfig);
 	const {
 		agent,
@@ -1834,18 +1830,15 @@ export function executeAsyncSingle(
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
-	let managedWorktreeProvider: "native" | "worktrunk" | undefined;
+	let managedWorktreeProvider: "native" | undefined;
 	if (params.worktree === true) {
 		try {
-			const resolved = resolveWorktreeProvider(params.worktreeProvider, worktreeBaseDir);
-			managedWorktreeProvider = shouldDeferWorktreeCwd(params.worktreeProvider, worktreeBaseDir) ? "worktrunk" : resolved;
+			managedWorktreeProvider = resolveWorktreeProvider(params.worktreeProvider, worktreeBaseDir);
 		} catch (error) {
 			return formatAsyncStartError("single", error instanceof Error ? error.message : String(error));
 		}
 	}
-	const instructionCwd = params.worktree === true && managedWorktreeProvider === "worktrunk"
-		? WORKTREE_AGENT_CWD_PLACEHOLDER
-		: params.worktree === true && managedWorktreeProvider === "native"
+	const instructionCwd = params.worktree === true && managedWorktreeProvider === "native"
 		? resolveExpectedWorktreeAgentCwd(runnerCwd, `${id}-s0`, 0, worktreeBaseDir)
 		: machine?.cwd ?? runnerCwd;
 	const readExistenceCwd = params.worktree === true ? runnerCwd : instructionCwd;
@@ -1894,8 +1887,6 @@ export function executeAsyncSingle(
 			? externalRunner
 				? reads.map((read) => read === "~" || read.startsWith("~/") || path.posix.isAbsolute(read) ? read : path.posix.resolve(instructionCwd, read))
 				: []
-			: managedWorktreeProvider === "worktrunk"
-			? resolveExistingReadInstructionPaths(reads, instructionCwd, readExistenceCwd)
 			: resolveExistingReadPaths(reads, readExistenceCwd)
 		: [];
 	const readsInstruction = readPaths.length > 0
@@ -2041,7 +2032,7 @@ export function executeAsyncSingle(
 	});
 	const recoveryAgentConfig = params.recoveryAgentConfig ?? agentConfig;
 	const recoveryDescriptor: SteeringRecoveryDescriptor = {
-		...(ctx.modelResponseAliases ? { modelResponseAliases: ctx.modelResponseAliases } : {}),
+		...(params.managedWorktreeReference ? { managedWorktreeReference: params.managedWorktreeReference } : {}),		...(ctx.modelResponseAliases ? { modelResponseAliases: ctx.modelResponseAliases } : {}),
 		version: 1,
 		...(lane ? { lane } : {}),
 		launchContractDigest,
@@ -2172,6 +2163,7 @@ export function executeAsyncSingle(
 						...(resolvedToolBudget.budget ? { toolBudget: resolvedToolBudget.budget } : {}),
 						...(params.worktree === true ? { worktree: true } : {}),
 						...(lane ? { lane } : {}),
+						...(params.managedWorktreeReference ? { managedWorktreeReference: params.managedWorktreeReference, gitEvidence: true } : {}),
 					},
 				],
 				resultPath: params.parentWorkflowRunId !== undefined && (params.revivalLease !== undefined || params.workflowAwaitAsync === true)

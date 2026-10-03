@@ -15,7 +15,7 @@ import { validateDisabledFeatures } from "../shared/disabled-features.ts";
 
 // Explicit route identity, worktree, checkpoint, and tool-surface policies must not be silently
 // discarded and replaced by the built-in defaults after validation fails.
-const FAIL_CLOSED_CONFIG_KEYS = ["worktreeProvider", "worktreeBranchPrefix", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget"];
+const FAIL_CLOSED_CONFIG_KEYS = ["worktree", "worktreeProvider", "worktreeBranchPrefix", "worktreeBaseDir", "worktreeSetupHook", "worktreeSetupHookTimeoutMs", "modelResponseAliases", "modelExclusions", "checkpointBeforeDeadlineMs", "disabledFeatures", "scheduledRuns", "toolActivation", "authorityPolicy", "permissions", "toolBudget"];
 
 const ARTIFACT_DIR_PREFERENCES = new Set<ArtifactDirPreference>(["project", "session", "temp"]);
 const FLEET_KEYBINDING_ACTION_SET = new Set<string>(FLEET_KEYBINDING_ACTIONS);
@@ -124,11 +124,12 @@ function validateMainWindowRendererConfig(value: unknown): void {
 }
 
 function validateConfig(config: Record<string, unknown>): void {
+	if (config.worktreeBaseDir !== undefined && (typeof config.worktreeBaseDir !== "string" || !config.worktreeBaseDir.trim())) throw new Error("config.worktreeBaseDir must be a non-empty string");
 	if (config.worktree !== undefined && typeof config.worktree !== "boolean") {
 		throw new Error("config.worktree must be a boolean");
 	}
-	if (config.worktreeProvider !== undefined && config.worktreeProvider !== "auto" && config.worktreeProvider !== "native" && config.worktreeProvider !== "worktrunk") {
-		throw new Error('config.worktreeProvider must be "auto", "native", or "worktrunk"');
+	if (config.worktreeProvider !== undefined && config.worktreeProvider !== "native") {
+		throw new Error('config.worktreeProvider must be "native"; other allocators are excluded');
 	}
 	if (config.worktreeBranchPrefix !== undefined) {
 		if (typeof config.worktreeBranchPrefix !== "string") throw new Error("config.worktreeBranchPrefix must be a string");

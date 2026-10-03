@@ -12,11 +12,18 @@
 
 See [validation evidence](VALIDATION.md) and the [workflow API](extensions/subagents/docs/workflows.md) for current coverage and limits. Source presence does not imply an enabled capability.
 
-## Later phases
+## Phase 2: native Git worktrees and handoffs
+
+Native Git allocation is enabled for direct and workflow children in both execution modes. It uses durable branch reservations, the existing writer FIFO, bounded snapshot collection and retained worktrees/branches. Interrupt/resume keeps the owned cwd. See [worktrees](extensions/subagents/docs/worktrees.md).
+
+Managed children capture bounded tracked-file evidence after admission, including retained resumes; ordinary delegation remains Git-free. `runs.lanes()` sequences dependent stages while independent lanes can overlap. Lane status, merge/supersession attestations, read-only cleanup planning and explicitly authorized discard are enabled. No automatic merge, removal, upload or repository-wide prune occurs. A plan is not permission to delete; unknown ownership, process settlement or writer state blocks discard.
+
+Only native Git worktrees are supported. Worktrunk and session sharing through GitHub Gist are explicitly excluded, not deferred. Subagents does not require `gh`; this does not restrict operators or agents using it for separately authorized GitHub work.
+
+## Remaining phases
 
 | Phase | Scope |
 | --- | --- |
-| 2 | Git/worktrees, isolated writers, lane/handoff integration, Worktrunk and `gh` sharing |
 | 3 | External Claude Code, Codex and Cursor runners and profiles |
 | 4 | Herdr/Ghostty placement and terminal inspection/status integration |
 | 5 | Optional messaging, MCP, permission and provider integrations |

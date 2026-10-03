@@ -404,8 +404,9 @@ export type SubagentResultStatus = "running" | "completed" | "failed" | "paused"
 export type SubagentOutputState = "present" | "absent" | "unknown";
 export type SubagentRunMode = "single" | "parallel" | "chain" | "workflow";
 export type SubagentResultMode = SubagentRunMode;
-export type WorktreeProvider = "auto" | "native" | "worktrunk";
-export type ManagedWorktreeProvider = Exclude<WorktreeProvider, "auto">;
+export type WorktreeProvider = "native";
+export interface ManagedWorktreeReference { path: string; runId: string; index: number; }
+export type ManagedWorktreeProvider = WorktreeProvider;
 
 export interface WorktreeNaming {
 	requestedBranch: string;
@@ -455,6 +456,7 @@ export interface ParallelHandoffLaneBinding {
 }
 
 export interface ParallelHandoffCleanupTask {
+	ownership?: import("../runs/shared/worktree-ownership.ts").WorktreeOwnership;
 	index: number;
 	path: string;
 	branch: string;
@@ -578,6 +580,8 @@ export interface SettlementDiagnostic {
 }
 
 export interface EffectsProjection {
+	/** Opt-in managed Git evidence; tracked files only, not acceptance or authorship proof. */
+	trackedMutations?: TrackedMutationEvidence;
 	fileMutation?: FileMutationEffect;
 	settlementDiagnostic?: SettlementDiagnostic;
 }
@@ -589,6 +593,7 @@ export interface TrackedMutationSnapshot {
 	gitRoot?: string;
 	dirtyFiles: string[];
 	fingerprints: Record<string, TrackedMutationFingerprint>;
+	baseCommit?: string;
 	truncated?: boolean;
 	unavailable?: string;
 }
@@ -823,6 +828,7 @@ export interface RunFanoutRejection extends RunFanoutBudgetSnapshot {
 }
 
 export interface SteeringRecoveryDescriptor {
+	managedWorktreeReference?: ManagedWorktreeReference;
 	/** Captured response identity authority; absence means no declared aliases on revival. */
 	modelResponseAliases?: Record<string, string[]>;
 	version: 1;
@@ -2177,6 +2183,8 @@ export interface ForegroundResumeChild {
 }
 
 export interface ForegroundResumeRun {
+	/** Required ownership evidence for a retained managed cwd. */
+	managedWorktreeHandoff?: string;
 	runId: string;
 	mode: SubagentRunMode;
 	cwd: string;
@@ -2447,6 +2455,8 @@ export interface ForegroundChildSessionControls {
 }
 
 export interface RunSyncOptions {
+	/** Internal opt-in for managed-worktree mutation diagnostics. */
+	gitEvidence?: boolean;
 	/** Internal release after output finalization, in addition to SDK termination proof. */
 	onWriterFinalizer?: (finalize: () => Promise<void>) => void;
 	/** Exact discovery provenance for an unknown-agent error; omission uses defensive fallback discovery. */

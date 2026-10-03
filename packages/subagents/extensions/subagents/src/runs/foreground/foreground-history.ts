@@ -93,6 +93,7 @@ function compactRun(run: ForegroundResumeRun): ForegroundResumeRun | undefined {
 		runId: run.runId,
 		mode: run.mode,
 		cwd: run.cwd,
+		...(run.managedWorktreeHandoff !== undefined ? { managedWorktreeHandoff: run.managedWorktreeHandoff } : {}),
 		sessionId: run.sessionId,
 		updatedAt: run.updatedAt,
 		children: run.children.map(compactChild),
@@ -119,6 +120,7 @@ function isRestorableRun(value: unknown): value is ForegroundResumeRun {
 	return typeof run.runId === "string" && Boolean(run.runId)
 		&& (run.mode === "single" || run.mode === "parallel" || run.mode === "chain")
 		&& typeof run.cwd === "string" && Boolean(run.cwd)
+		&& (run.managedWorktreeHandoff === undefined || typeof run.managedWorktreeHandoff === "string")
 		&& typeof run.sessionId === "string" && Boolean(run.sessionId)
 		&& typeof run.updatedAt === "number" && Number.isFinite(run.updatedAt)
 		&& Array.isArray(run.children)

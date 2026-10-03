@@ -76,10 +76,49 @@ test("workflow output budgets fail before flooding the host and keep partial evi
 
 test("phase-one gates apply even without user config and keep neutral internal fields valid", () => {
   const surface = resolveDisabledFeatureSurface({});
-  for (const request of [{ action: "mission.create" }, { action: "schedule.run" }, { action: "inspector.open" }, { worktree: true }, { isolation: "worktree" }, { acceptance: { verify: ["true"] } }, { machine: "remote" }]) assert.ok(disabledFeatureUseError(request, surface));
+  for (const request of [{ action: "mission.create" }, { action: "schedule.run" }, { action: "inspector.open" }, { acceptance: { verify: ["true"] } }, { machine: "remote" }]) assert.ok(disabledFeatureUseError(request, surface));
   assert.equal(disabledFeatureUseError({ agent: "worker", task: "work", mission: false, acceptance: false }, surface), undefined);
-  for (const options of [{ worktree: true }, { share: true }, { shareEnabled: true }, { machine: "remote" }]) assert.throws(() => assertNativeExecution(options), /phase 1/);
+  for (const options of [{ share: true }, { shareEnabled: true }]) assert.throws(() => assertNativeExecution(options), /excluded/);
+  assert.throws(() => assertNativeExecution({ machine: "remote" }), /phase 1/);
   for (const agent of [{ runner: { type: "codex" } }, { permissions: {} }, { tools: ["mcp:server"] }]) assert.throws(() => assertNativeAgent({ name: "deferred", ...agent }), /phase 1/);
+  assert.equal(disabledFeatureUseError({ worktree: true, isolation: "worktree", baseRef: "HEAD" }, surface), undefined);
+  assert.throws(() => assertNativeExecution({ worktree: true }), /subagent executor/);
+  assert.doesNotThrow(() => assertNativeExecution({ worktree: true, worktreeProvider: "native" }, true));
+  assert.throws(() => assertNativeExecution({ worktreeProvider: "auto" }, true), /native Git/);
   assert.doesNotThrow(() => assertNativeExecution({ acceptance: false, shareEnabled: false }));
   assert.doesNotThrow(() => assertNativeAgent({ name: "native", defaultAcceptance: false }));
+});
+
+test("lane stages advance independently, await predecessors and resume their retained run", async () => {
+  const calls = []; let release; const barrier = new Promise((resolve) => { release = resolve; }); let started = 0;
+  const workflow = await runWorkflowScript(options(`return await runs.lanes([
+    {key:"left",stages:[{key:"write",agent:"worker",task:"left"},{key:"review",resume:"previous",task:"review"}]},
+    {key:"right",stages:[{key:"write",agent:"worker",task:"right"},{key:"review",agent:"reviewer",task:"review"}]}
+  ]);`, async (key, params) => {
+    calls.push({ key, params });
+    if (key.endsWith("write")) { if (++started === 2) release(); await barrier; }
+    if (key === "left.review") assert.equal(params.resume, "left.write");
+    return result(key);
+  }));
+  assert.deepEqual(workflow.value.map((lane) => lane.state), ["complete", "complete"]);
+  assert.deepEqual(calls.slice(0, 2).map((call) => call.key), ["left.write", "right.write"]);
+  assert.equal(calls.length, 4);
+});
+
+test("a blocked lane skips dependents without aborting siblings; invalid lane plans launch nothing", async () => {
+  const calls = [];
+  const workflow = await runWorkflowScript(options(`return runs.lanes([
+    {key:"bad",stages:[{key:"write",agent:"worker",task:"write"},{key:"review",agent:"reviewer",task:"review"}]},
+    {key:"good",stages:[{key:"write",agent:"worker",task:"write"},{key:"review",agent:"reviewer",task:"review"}]}
+  ]);`, async (key) => { calls.push(key); return key === "bad.write" ? { ...result(key), structuredOutput: { verdict: "blocked" } } : result(key); }));
+  assert.deepEqual(calls, ["bad.write", "good.write", "good.review"]);
+  assert.equal(workflow.value[0].stages[1].state, "skipped");
+  assert.equal(workflow.value[1].state, "complete");
+  let launches = 0;
+  for (const script of [
+    `return runs.lanes([{key:"lane",stages:[{key:"review",resume:"previous",task:"review"}]}]);`,
+    `return runs.lanes([{key:"lane",stages:[{key:"write",agent:"worker",task:"write"},{key:"write",agent:"worker",task:"duplicate"}]}]);`,
+    `return runs.lanes.constructor("return process")();`,
+  ]) await assert.rejects(runWorkflowScript(options(script, async (key) => { launches++; return result(key); })));
+  assert.equal(launches, 0);
 });

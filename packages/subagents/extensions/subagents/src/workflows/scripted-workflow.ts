@@ -812,8 +812,8 @@ const runs = Object.freeze({
     const { calls, launched } = launchRunsAll(items);
     return trackRunObservation(launched.map(({ key, callId }) => ({ key, operation: "run", callId })), trackPromiseCombinator(launched.map(({ promise }) => promise), (values) => Promise.all(values).then((results) => wrapRunsAllResults(results.map(decorateWorkflowChildResult), calls.map(({ key }) => key)))));
   },
-  lanes(_laneSpecs) {
-    throw new Error("runs.lanes is deferred to Tau phase 2.");
+  lanes(laneSpecs) {
+    return runLanes(laneSpecs);
   },
   host(key, params) {
     validateHostCommand(key, params);
@@ -1958,7 +1958,7 @@ export function validateWorkflowScript(script: string, options: WorkflowScriptVa
 	// A rebound `runs` may not be the workflow API, so its calls prove nothing about child launches.
 	const agentNameError = options.agentNameError && !invalidatesRunsBinding(workflowBody) ? options.agentNameError : undefined;
 	walkAst(workflowBody, (node) => {
-		if (directRunsCall(node, "host") || directRunsCall(node, "lanes")) errors.push({ message: "Host steps and worktree lanes are deferred beyond Tau phase 1.", ...nodeLocation(node) });
+		if (directRunsCall(node, "host")) errors.push({ message: "Host steps are deferred to Tau phase 6.", ...nodeLocation(node) });
 		if (node !== wrapper && node.async === true && (node.type === "FunctionDeclaration" || node.type === "FunctionExpression" || node.type === "ArrowFunctionExpression")) {
 			errors.push({ message: "workflowScript does not support nested async functions. Use top-level await, plain helper functions that return runs.run(...), or explicit Promise chains.", ...nodeLocation(node) });
 		}

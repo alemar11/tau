@@ -12,7 +12,7 @@ pi -e ./packages/subagents
 pi install /path/to/tau/packages/subagents
 ```
 
-The Tau root bundle also includes it; install the bundle **or** individual packages, not both. The local `web` dependency belongs to Tau. No external runner, Git executable or terminal manager is required for native delegation. Configuration and state use Tau-owned namespaces.
+The Tau root bundle also includes it; install the bundle **or** individual packages, not both. The local `web` dependency belongs to Tau. No external runner, Git executable or terminal manager is required for ordinary native delegation. Git is required only when opting into worktree isolation. Configuration and state use Tau-owned namespaces.
 
 ## Use
 
@@ -29,6 +29,7 @@ Custom profiles: `$PI_CODING_AGENT_DIR/tau-subagents/agents/` (default `~/.pi/ag
 
 - [Profiles and Tau Web](extensions/subagents/docs/agents.md)
 - [Workflow API and dependency barriers](extensions/subagents/docs/workflows.md)
+- [Native Git worktrees and explicit cleanup](extensions/subagents/docs/worktrees.md)
 - [Controls, supervisor replies, output and Pi UI](extensions/subagents/docs/tool-reference.md)
 - [Configuration, limits and ownership](extensions/subagents/docs/configuration.md)
 
@@ -44,9 +45,11 @@ Writer state is versioned in the user-scoped temporary root's `writer-admission-
 
 Default limits: depth 2, 64 spawns per run, workflow concurrency 20, single-child timeout 30 minutes. Artifact retention defaults to 7 days; async retention is 30 days with a 24-hour tombstone grace. Writer ownership is separate from artifact cleanup. Do not put secrets in workflow args or public metadata.
 
-## Phase boundaries
+## Native worktrees and phase boundaries
 
-Phase 1 is the native core. Git/worktrees/sharing, external AI runners, terminal managers, optional integrations, missions/schedules/watchdog and advanced gates remain tracked for phases 2–6. Their public launch options/actions are rejected. Deferred source is not advertised as an installed capability. Advanced package subpath APIs and council/prompt resources still require their own increments; see `ROADMAP.md`.
+Phase two enables native Git worktrees, tracked mutation evidence, workflow lanes and handoff management. Use `worktree:true` (or `isolation:"worktree"`), optionally `baseRef`. Distinct worktrees allow concurrent writers; the same cwd still uses FIFO admission. Worktrees and branches are **retained by default**, including after cancellation. `worktree.cleanup` creates a read-only plan; `worktree.discard` requires explicit authorization and verified settlement/ownership. Merge and supersession actions record evidence, never execute a merge. See the worktree guide for safety and shared-resource limits.
+
+Worktrunk and session sharing through GitHub Gist are explicitly excluded; `gh` is not a Subagents runtime requirement. External AI runners, terminal managers, optional integrations, missions/schedules/watchdog and advanced gates remain tracked for subsequent increments. Their public launch options/actions are rejected. Deferred source is not advertised as an installed capability. Advanced package subpath APIs and council/prompt resources still require their own increments; see `ROADMAP.md`.
 
 ## Validation
 

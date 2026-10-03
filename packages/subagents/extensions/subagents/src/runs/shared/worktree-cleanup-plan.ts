@@ -14,8 +14,10 @@ import type {
 	ParallelHandoffManifest,
 } from "../../shared/types.ts";
 import { getAgentDir } from "../../shared/utils.ts";
-import { isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
-import { MACHINE_DIFF_OPTIONS, validateWorktreePatchRepresentsCurrentWorktree } from "./worktree.ts";
+import { assertHandoffRunSettled, isTerminalParallelHandoffChildStatus } from "./parallel-handoff.ts";
+import { worktreeWriterScope } from "./worktree-ownership.ts";
+import { inspectWriterScope } from "./writer-admission.ts";
+import { assertManagedWorktree, gitEnvironment, resolveWorktreeProjectDirectory, MACHINE_DIFF_OPTIONS } from "./worktree.ts";
 
 export const WORKTREE_CLEANUP_PLAN_VERSION = 1 as const;
 export const WORKTREE_CLEANUP_PLAN_TTL_MS = 30 * 60 * 1000;
@@ -133,7 +135,7 @@ interface RunStateInspection {
 
 function runGit(cwd: string, args: string[]): GitResult {
 	try {
-		const result = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf-8", windowsHide: true });
+		const result = spawnSync("git", ["-c", "core.fsmonitor=false", "-c", `core.hooksPath=${os.devNull}`, "-C", cwd, ...args], { encoding: "utf-8", windowsHide: true, timeout: 5000, killSignal: "SIGKILL", maxBuffer: 8 * 1024 * 1024, env: gitEnvironment() });
 		return {
 			stdout: result.stdout ?? "",
 			stderr: result.stderr ?? "",
@@ -246,17 +248,7 @@ function resolveRepoRoot(repo: string): string {
 }
 
 function resolveCleanupBaseDir(repoRoot: string, configuredBaseDir: string | undefined): string {
-	const raw = configuredBaseDir ?? process.env.TAU_SUBAGENTS_WORKTREE_DIR;
-	let dedicatedRoot: string;
-	if (raw === undefined || (configuredBaseDir === undefined && !raw.trim())) {
-		dedicatedRoot = path.join(path.dirname(repoRoot), "worktrees");
-	} else {
-		const trimmed = raw.trim();
-		if (!trimmed) throw new Error("worktree base directory cannot be empty");
-		const expanded = trimmed.startsWith("~/") ? path.join(os.homedir(), trimmed.slice(2)) : trimmed;
-		dedicatedRoot = path.isAbsolute(expanded) ? expanded : path.resolve(repoRoot, expanded);
-	}
-	return path.resolve(path.join(dedicatedRoot, path.basename(repoRoot)));
+	return path.resolve(resolveWorktreeProjectDirectory(repoRoot, configuredBaseDir));
 }
 
 function cleanupContainmentInvalid(repoRoot: string, projectDir: string): boolean {
@@ -573,7 +565,7 @@ function resolveBranchTip(repoRoot: string, branch: string): { value?: string; e
 	return { value: result.stdout.trim() };
 }
 
-function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string, baseCommit: string): { path?: string; error?: string } {
+function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string, baseCommit: string, head: string): { path?: string; error?: string } {
 	const patchPath = metadataPatchPath(record);
 	if (!patchPath || record.child.patch?.error !== undefined || record.child.patch?.changed !== true) return {};
 	const inspection = inspectPath(patchPath);
@@ -585,11 +577,14 @@ function isPatchCaptured(record: ManifestMetadataRecord, worktreePath: string, b
 	} catch (error) {
 		return { error: `captured patch cannot be inspected: ${error instanceof Error ? error.message : String(error)}` };
 	}
-	if (!patchStat.isFile()) return { error: "captured handoff patch is not a file" };
+	if (!patchStat.isFile() || inspection.symlink || patchStat.size > 8 * 1024 * 1024) return { error: "captured handoff patch is not a bounded regular file" };
 	if (pathInside(worktreePath, inspection.realpath)) return { error: "durable handoff patch lives inside the worktree" };
 	if (patchStat.size <= 0) return { error: "captured handoff patch is empty" };
-	const validationError = validateWorktreePatchRepresentsCurrentWorktree(worktreePath, baseCommit, patchPath);
-	if (validationError) return { error: `captured handoff patch failed validation: ${validationError}` };
+	// The planner already requires a clean checkout. Compare immutable commits,
+	// not a temporary-index snapshot that could race a newly admitted writer.
+	const diff = runGit(worktreePath, ["diff", ...MACHINE_DIFF_OPTIONS, "--binary", baseCommit, head, "--"]);
+	if (diff.status !== 0) return { error: `captured handoff patch failed validation: ${gitFailure(diff, "git diff")}` };
+	if (fs.readFileSync(patchPath, "utf8") !== diff.stdout) return { error: "captured handoff patch no longer matches the recorded worktree HEAD" };
 	return { path: patchPath };
 }
 
@@ -646,6 +641,14 @@ function buildManagedEntry(input: {
 		return blockedEntry(entry, "ineligible", "keep", "metadata-recorded branch is checked out at the repository root");
 	}
 
+	try {
+		assertManagedWorktree(record.task);
+		const scope = worktreeWriterScope(record.task.ownership, record.task.path, record.task.branch);
+		if (scope.ownerRunId !== record.manifest.runId) throw new Error("worktree belongs to a different run");
+		const writer = inspectWriterScope(scope);
+		if (writer !== "idle") return blockedEntry(entry, writer === "active" ? "active" : "unknown", "keep", "writer ownership is active or unknown");
+		assertHandoffRunSettled(record.manifest, record.manifestPath, foregroundRunOwnership);
+	} catch (error) { return blockedEntry(entry, "unknown", "unknown", error instanceof Error ? error.message : String(error)); }
 	const runState = inspectRunState(record, input.now, foregroundRunOwnership);
 	if (runState.kind === "unknown") return blockedEntry(entry, "unknown", "unknown", runState.reason ?? "owning run state is unknown");
 	if (runState.kind === "active") return blockedEntry(entry, "active", "keep", runState.reason ?? "owning run is active");
@@ -675,7 +678,7 @@ function buildManagedEntry(input: {
 	const branchTipIsAncestor = ancestor.status === 0;
 	let divergenceSafe = diff.status === 0;
 	if (!divergenceSafe) {
-		const captured = isPatchCaptured(record, worktreePath, resolvedBase.value);
+		const captured = isPatchCaptured(record, worktreePath, resolvedBase.value, git.head);
 		if (captured.error) return blockedEntry(entry, "ineligible", "keep", captured.error);
 		if (captured.path) {
 			entry.patchPath = captured.path;

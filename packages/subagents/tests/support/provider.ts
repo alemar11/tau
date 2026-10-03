@@ -17,6 +17,7 @@ export default function fixtureProvider(pi: ExtensionAPI) {
 				const contextText = JSON.stringify(context);
 				const gate = contextText.match(/TAU_FIXTURE_GATE:([^\s"\\]+)/)?.[1];
 				const writePath = contextText.match(/TAU_FIXTURE_WRITE:([^\s"\\]+)/)?.[1];
+				const writeContent = contextText.match(/TAU_FIXTURE_CONTENT:(\w+)/)?.[1] ?? "unauthorized mutation";
 				const sendsTool = Boolean(writePath && !context.messages.some((message) => message.role === "toolResult"));
 				const tools = getCurrentTools(context.messages);
 				const hasWeb = ["web_search", "fetch_web_content", "get_cached_web_content"].every((name) => tools.some((tool) => tool.name === name));
@@ -27,7 +28,7 @@ export default function fixtureProvider(pi: ExtensionAPI) {
 					stopReason: "stop" as const, timestamp: Date.now(),
 				};
 				if (sendsTool) {
-					output.content = [{ type: "toolCall", id: "fixture-write", name: "write", arguments: { path: writePath, content: "unauthorized mutation" } }];
+					output.content = [{ type: "toolCall", id: "fixture-write", name: "write", arguments: { path: writePath, content: writeContent } }];
 					output.stopReason = "toolUse";
 				}
 				try {

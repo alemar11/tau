@@ -114,6 +114,23 @@ export async function admitWriter(options: AdmissionOptions): Promise<{ release(
 	};
 }
 
+/** Read-only planning evidence. Missing/corrupt state is not proof of quiescence. */
+export function inspectWriterScope(options: Pick<AdmissionOptions, "cwd" | "rootSessionId" | "storageRoot">): "idle" | "active" | "unknown" {
+	try {
+		const cwd = fs.realpathSync(options.cwd);
+		const key = createHash("sha256").update(JSON.stringify([options.rootSessionId, cwd])).digest("hex");
+		const dir = path.join(options.storageRoot ?? path.join(TEMP_ROOT_DIR, "writer-admission-v1"), key);
+		if (fs.existsSync(path.join(dir, "transaction"))) return "unknown";
+		const queuePath = path.join(dir, "queue.json");
+		const stat = fs.lstatSync(queuePath);
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) return "unknown";
+		const queue: Queue = JSON.parse(fs.readFileSync(queuePath, "utf8"));
+		if (!queue || queue.version !== 1 || queue.cwd !== cwd || queue.rootSessionId !== options.rootSessionId || !Array.isArray(queue.waiting)
+			|| queue.waiting.length > MAX_QUEUED_WRITERS || queue.waiting.some((ticket) => !validTicket(ticket)) || (queue.owner !== undefined && !validTicket(queue.owner))) return "unknown";
+		return queue.owner || queue.waiting.length ? "active" : "idle";
+	} catch { return "unknown"; }
+}
+
 /** Holds admission beyond dispatch, abort requests and bounded SDK dispose. Only a
  * settled prompt plus observed tool completion may release a live writer. */
 export function withWriterAdmission(factory: ChildSessionFactory): ChildSessionFactory {

@@ -20,7 +20,11 @@ import type {
 	WorktreeSetupProgress,
 	WorktreeCleanupIntent,
 } from "./worktree.ts";
-import { cleanupWorktrees } from "./worktree.ts";
+import { assertManagedWorktree, cleanupWorktrees, withWorktreeFinalization } from "./worktree.ts";
+import { worktreeWriterScope } from "./worktree-ownership.ts";
+import { TEMP_ROOT_DIR } from "../../shared/types.ts";
+import { inspectWriterScope } from "./writer-admission.ts";
+import { readProcessTerminal } from "../background/process-terminal.ts";
 import { assertWorkflowLaneKey, normalizeWorkflowLaneMetadata } from "./lane-metadata.ts";
 
 export interface ParallelHandoffResult {
@@ -121,6 +125,8 @@ function validateManifestIdentity(parsed: ParallelHandoffManifest, manifestPath:
 
 export function readParallelHandoffManifest(manifestPath: string): ParallelHandoffManifest | undefined {
 	if (!fs.existsSync(manifestPath)) return undefined;
+	const stat = fs.lstatSync(manifestPath);
+	if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw new Error(`Invalid handoff file: ${manifestPath}`);
 	const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
 	return validateManifestIdentity(parsed, manifestPath);
 }
@@ -159,7 +165,16 @@ function pathInside(root: string, candidate: string): boolean {
 	return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
-export function resolveRetainedWorktreeCwd(manifestPath: string, runId: string, childIndex: number): string | undefined {
+export function resolveManagedWorktreeReference(value: unknown, rootSessionId?: string): string {
+	const ref = value as Partial<import("../../shared/types.ts").ManagedWorktreeReference> | null;
+	if (!ref || typeof ref.path !== "string" || !path.isAbsolute(ref.path) || typeof ref.runId !== "string" || !ref.runId
+		|| !Number.isInteger(ref.index) || ref.index! < 0) throw new Error("Invalid managed worktree recovery reference");
+	const cwd = resolveRetainedWorktreeCwd(ref.path, ref.runId, ref.index!, rootSessionId);
+	if (!cwd) throw new Error("Missing managed worktree recovery evidence");
+	return cwd;
+}
+
+export function resolveRetainedWorktreeCwd(manifestPath: string, runId: string, childIndex: number, rootSessionId?: string): string | undefined {
 	const manifest = readParallelHandoffManifest(manifestPath);
 	if (!manifest) return undefined;
 	if (manifest.runId !== runId) throw new Error(`Managed worktree handoff belongs to run '${manifest.runId}', not '${runId}'.`);
@@ -185,6 +200,10 @@ export function resolveRetainedWorktreeCwd(manifestPath: string, runId: string, 
 		throw new Error(`Async run '${runId}' required managed worktree cwd is missing: ${requiredCwd}`, { cause: error instanceof Error ? error : undefined });
 	}
 	if (!pathInside(worktreeRoot, resolvedRequiredCwd)) throw new Error(`Async run '${runId}' has an invalid managed worktree cwd.`);
+	assertManagedWorktree(cleanup);
+	const scope = worktreeWriterScope(cleanup.ownership, cleanup.path, cleanup.branch);
+	if (path.resolve(scope.storageRoot) !== path.join(TEMP_ROOT_DIR, "writer-admission-v1")) throw new Error("Managed resume requires the original writer storage; restore TAU_SUBAGENTS_TEMP_ROOT before resuming");
+	if (rootSessionId !== undefined && rootSessionId !== scope.rootSessionId) throw new Error("Managed resume root session mismatch");
 	return requiredCwd;
 }
 
@@ -572,6 +591,7 @@ export function writeParallelHandoffGroup(input: {
 			state: "partial",
 			pruned: false,
 			tasks: input.setup.worktrees.map((worktree) => ({
+				ownership: worktree.ownership,
 				index: worktree.index,
 				path: worktree.path,
 				branch: worktree.branch,
@@ -663,7 +683,7 @@ export function writeWorktreeSetupHandoff(input: Omit<Parameters<typeof writePar
 			tasks: setup.worktrees.map((worktree) => {
 				const task = cleanup?.tasks.find((candidate) => candidate.index === worktree.index);
 				return task ? { ...task, reason: task.reason && diagnostic(task.reason), errors: task.errors?.map(diagnostic) } : {
-					index: worktree.index, path: worktree.path, branch: worktree.branch,
+					ownership: worktree.ownership, index: worktree.index, path: worktree.path, branch: worktree.branch,
 					provider: worktree.provider, naming: worktree.naming,
 					worktreeRemoved: false, branchRemoved: false, preserved: true,
 					reason: "setup pending durable handoff capture",
@@ -681,61 +701,66 @@ export function formatParallelHandoffError(error: unknown): string {
 	return `Worktree handoff unavailable: ${error instanceof Error ? error.message : String(error)}`;
 }
 
-export function discardPreservedWorktrees(
+export type HandoffRunOwnership = (runId: string) => "active" | "terminal" | "unknown";
+
+/** A terminal result is not process settlement. Unknown owners never authorize deletion. */
+export function assertHandoffRunSettled(manifest: ParallelHandoffManifest, manifestPath: string, foregroundRunOwnership?: HandoffRunOwnership): void {
+	if (hasActiveChildren(manifest)) throw new Error("Handoff has an active or unknown child owner");
+	if (manifest.source === "foreground") {
+		if (foregroundRunOwnership?.(manifest.runId) !== "terminal") throw new Error("Foreground owner is not provably terminal");
+	} else if (manifest.source === "async") {
+		const statusPath = path.join(path.dirname(manifestPath), "status.json");
+		const stat = fs.lstatSync(statusPath);
+		if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 2 * 1024 * 1024) throw new Error("Invalid owner status");
+		const status = JSON.parse(fs.readFileSync(statusPath, "utf8"));
+		if (status.runId !== manifest.runId || !["complete", "failed", "partial", "paused", "stopped", "rejected"].includes(status.state)
+			|| readProcessTerminal(path.dirname(manifestPath), { runId: manifest.runId, runnerProcessInstanceId: status.runnerProcessInstanceId })?.state !== "observed") throw new Error("Background owner has not reached observed process settlement");
+	} else throw new Error("Unknown handoff owner");
+}
+
+export async function discardPreservedWorktrees(
 	manifestPath: string,
 	authorization: Extract<WorktreeCleanupIntent, { kind: "discard" }>["authorization"],
-): { manifest: ParallelHandoffManifest; text: string } {
+	options: { expectedDigest?: string; foregroundRunOwnership?: HandoffRunOwnership } = {},
+): Promise<{ manifest: ParallelHandoffManifest; text: string }> {
 	const resolvedPath = path.resolve(manifestPath);
 	const manifest = readParallelHandoffManifest(resolvedPath);
 	if (!manifest) throw new Error(`Parallel handoff manifest not found: ${resolvedPath}`);
-	let attempted = 0;
-	for (const group of manifest.groups) {
-		const pending = group.cleanup.tasks.filter((task) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));
-		if (pending.length === 0) continue;
-		attempted += pending.length;
-		const report = cleanupWorktrees({
-			cwd: group.repoRoot,
-			baseCommit: group.baseCommit,
-			worktrees: pending.map((task) => ({
-				path: task.path,
-				agentCwd: task.path,
-				branch: task.branch,
-				...(task.provider ? { provider: task.provider } : {}),
-				...(task.naming ? { naming: task.naming } : {}),
-				index: task.index,
-				nodeModulesLinked: false,
-				syntheticPaths: [],
-			})),
-		}, { kind: "discard", authorization });
-		const updates = new Map(report.tasks.map((task) => [task.index, task.worktreeRemoved && task.branchRemoved
-			? task
-			: { ...task, preserved: true, reason: task.reason ?? "discard cleanup remains incomplete" }]));
-		group.cleanup = {
-			state: group.cleanup.tasks.every((task) => {
-				const next = updates.get(task.index) ?? task;
-				return next.worktreeRemoved && next.branchRemoved;
-			}) && report.pruned ? "complete" : "partial",
-			tasks: group.cleanup.tasks.map((task) => updates.get(task.index) ?? task),
-			pruned: report.pruned,
-			...(report.errors ? { errors: report.errors } : {}),
-		};
-	}
-	manifest.updatedAt = Date.now();
-	writeAtomicJson(resolvedPath, manifest);
-	const remaining = manifest.groups.flatMap((group) => group.cleanup.tasks.map((task) => ({ group, task })))
-		.filter(({ task }) => task.preserved && (!task.worktreeRemoved || !task.branchRemoved));
-	const lines = attempted === 0
-		? [`No preserved worktrees remain in ${resolvedPath}.`]
-		: [`Discard processed ${attempted} preserved worktree${attempted === 1 ? "" : "s"}.`, `Manifest: ${resolvedPath}`];
-	if (remaining.length > 0) {
-		lines.push("", "Some worktrees remain. Inspect and remove them manually if appropriate:");
-		for (const { group, task } of remaining) {
-			lines.push(
-				`  git -C ${JSON.stringify(group.repoRoot)} status --short`,
-				`  git -C ${JSON.stringify(group.repoRoot)} worktree remove --force ${JSON.stringify(task.path)}`,
-				`  git -C ${JSON.stringify(group.repoRoot)} branch -D ${JSON.stringify(task.branch)}`,
-			);
+	const digest = stableJsonDigest(manifest);
+	if (options.expectedDigest !== undefined && options.expectedDigest !== digest) throw new Error("Handoff changed since discard confirmation; review it again");
+	assertHandoffRunSettled(manifest, resolvedPath, options.foregroundRunOwnership);
+	const groups = manifest.groups.map((group) => ({ group, worktrees: group.cleanup.tasks
+		.filter((task) => !task.worktreeRemoved || !task.branchRemoved)
+		.map((task) => {
+			if (task.preserved !== true || task.worktreeRemoved || task.branchRemoved) throw new Error("Incomplete or unowned cleanup requires manual reconciliation");
+			assertManagedWorktree(task);
+			const scope = worktreeWriterScope(task.ownership, task.path, task.branch);
+			if (scope.ownerRunId !== manifest.runId) throw new Error("Worktree belongs to a different run");
+			if (inspectWriterScope(scope) !== "idle") throw new Error("Worktree writer is active or unknown; nothing was discarded");
+			for (const artifact of [resolvedPath, ...group.children.flatMap((child) => [child.outputPath, child.structuredOutputPath, child.sessionPath, child.patch.path])]) {
+				if (artifact && pathInside(fs.realpathSync(task.path), resolveExistingPath(path.resolve(path.dirname(resolvedPath), artifact)))) throw new Error("Handoff evidence is inside the worktree; preserve it before discard");
+			}
+			return { ...task, agentCwd: scope.cwd, nodeModulesLinked: false, syntheticPaths: [], scope };
+		}) }));
+	const worktrees = groups.flatMap((entry) => entry.worktrees);
+	if (!worktrees.length) return { manifest, text: `No preserved worktrees remain in ${resolvedPath}.` };
+	if (new Set(worktrees.map((tree) => fs.realpathSync(tree.path))).size !== worktrees.length) throw new Error("Duplicate managed worktree in handoff");
+	const rootSessionId = worktrees[0]!.scope.rootSessionId;
+	if (worktrees.some((tree) => tree.scope.rootSessionId !== rootSessionId)) throw new Error("Mixed root sessions in handoff");
+	return withWorktreeFinalization({ cwd: manifest.cwd, baseCommit: "", worktrees, writerIdentity: { rootSessionId, runId: `${manifest.runId}:discard`, ancestors: [] } }, () => {
+		const current = readParallelHandoffManifest(resolvedPath);
+		if (!current || stableJsonDigest(current) !== digest) throw new Error("Handoff changed while waiting for discard admission");
+		assertHandoffRunSettled(current, resolvedPath, options.foregroundRunOwnership);
+		for (const { group, worktrees: pending } of groups) {
+			if (!pending.length) continue;
+			const report = cleanupWorktrees({ cwd: group.repoRoot, baseCommit: group.baseCommit, worktrees: pending }, { kind: "discard", authorization });
+			const updates = new Map(report.tasks.map((task) => [task.index, { ...task, preserved: !(task.worktreeRemoved && task.branchRemoved) }]));
+			group.cleanup = { state: report.state, tasks: group.cleanup.tasks.map((task) => updates.get(task.index) ?? task), pruned: false };
+			manifest.updatedAt = Date.now();
+			// Persist each completed group so a later failure does not hide partial removal.
+			writeAtomicJson(resolvedPath, manifest);
 		}
-	}
-	return { manifest, text: lines.join("\n") };
+		const remaining = manifest.groups.flatMap((group) => group.cleanup.tasks).filter((task) => !task.worktreeRemoved || !task.branchRemoved);
+		return { manifest, text: `Discard processed ${worktrees.length} worktrees. ${remaining.length} require manual reconciliation.\nManifest: ${resolvedPath}` };
+	});
 }

@@ -78,7 +78,7 @@ import { assertRequiredChildExtensionsAdmitted, hasMandatoryRequiredChildExtensi
 import { finalizeSingleOutput, injectSingleOutputInstruction, normalizeSingleOutputOverride, outputPathMappingFromTask, resolveSingleOutputPath, validateFileOnlyOutputMode } from "../shared/single-output.ts";
 import { assertJsonSchemaObject, cleanupStructuredOutputRuntime, createStructuredOutputRuntime } from "../shared/structured-output.ts";
 import { compactForegroundDetails, getSingleResultOutput, PROMPT_REDACTED, readStatus, resolveChildCwd, sumResultsCost, sumResultsUsage, toAgentToolUsage } from "../../shared/utils.ts";
-import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
+import { discardPreservedWorktrees, formatParallelHandoffError, formatParallelHandoffReference, formatStoredParallelHandoffCleanup, parallelHandoffPath, readParallelHandoffManifest, resolveRetainedWorktreeCwd, recordParallelHandoffMerge, recordParallelHandoffSupersession, writeParallelHandoffGroup, writeWorktreeSetupHandoff } from "../shared/parallel-handoff.ts";
 import { summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import {
 	attachNestedChildrenToResultChildren,
@@ -152,6 +152,7 @@ import {
 	createWorktrees,
 	preflightWorktreeSource,
 	withWorktreeTransaction,
+	withWorktreeFinalization,
 	type WorktreeSetupProgress,
 	diffWorktrees,
 	formatWorktreeDiffSummary,
@@ -777,7 +778,7 @@ function foregroundChildActivityFromProgress(progress: SingleResult["progress"] 
 	};
 }
 
-function rememberForegroundRun(state: SubagentState, input: { modelResponseAliases?: Record<string, string[]>; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; params: SubagentParamsLike; effectiveOutput?: string | boolean; effectiveOutputMode: OutputMode; extensionBindings?: ExtensionBindings; requiredExtensions?: SteeringRecoveryDescriptor["requiredExtensions"] }): void {
+function rememberForegroundRun(state: SubagentState, input: { managedWorktreeHandoff?: string; modelResponseAliases?: Record<string, string[]>; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; results: SingleResult[]; params: SubagentParamsLike; effectiveOutput?: string | boolean; effectiveOutputMode: OutputMode; extensionBindings?: ExtensionBindings; requiredExtensions?: SteeringRecoveryDescriptor["requiredExtensions"] }): void {
 	state.foregroundRuns ??= new Map();
 	const previous = state.foregroundRuns.get(input.runId);
 	const updatedAt = Date.now();
@@ -785,6 +786,7 @@ function rememberForegroundRun(state: SubagentState, input: { modelResponseAlias
 		runId: input.runId,
 		mode: input.mode,
 		cwd: input.cwd,
+		...(input.managedWorktreeHandoff !== undefined ? { managedWorktreeHandoff: input.managedWorktreeHandoff } : {}),
 		...(input.sessionId ? { sessionId: input.sessionId } : {}),
 		updatedAt,
 		children: input.results.map((result, index) => {
@@ -867,7 +869,7 @@ function applyControlEventToRememberedForegroundRun(state: SubagentState, event:
 	};
 }
 
-function updateRememberedForegroundChild(state: SubagentState, input: { runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; index: number; result: SingleResult; events: IntercomEventBus; notify?: boolean }): void {
+function updateRememberedForegroundChild(state: SubagentState, input: { managedWorktreeHandoff?: string; runId: string; mode: "single" | "parallel" | "chain"; cwd: string; sessionId: string | null; index: number; result: SingleResult; events: IntercomEventBus; notify?: boolean }): void {
 	state.foregroundRuns ??= new Map();
 	const updatedAt = Date.now();
 	let run = state.foregroundRuns.get(input.runId);
@@ -876,6 +878,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 		state.foregroundRuns.set(input.runId, run);
 	}
 	run.updatedAt = updatedAt;
+	if (input.managedWorktreeHandoff !== undefined) run.managedWorktreeHandoff = input.managedWorktreeHandoff;
 	const terminalStatus = resolveSubagentResultStatus(omitUndefinedProperties({
 		exitCode: input.result.exitCode,
 		...(input.result.acceptance?.status === "rejected" ? { success: false } : {}),
@@ -949,7 +952,7 @@ function updateRememberedForegroundChild(state: SubagentState, input: { runId: s
 	});
 }
 
-function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
+function resolveForegroundResumeTarget(params: SubagentParamsLike, state: SubagentState, options: { exactOnly?: boolean } = {}): { managedWorktreeReference?: SteeringRecoveryDescriptor["managedWorktreeReference"]; managedWorktree?: boolean; runId: string; mode: SubagentRunMode; state: "complete"; agent: string; index: number; cwd: string; sessionFile: string; model?: string; thinking?: string; launchContractDigest?: string; resumeContract?: ForegroundResumeChild["resumeContract"]; extensionBindings?: ExtensionBindings; capabilityCeiling?: ResolvedSubagentCapabilityCeiling } | undefined {
 	const requested = (params.id ?? params.runId)?.trim();
 	if (!requested || !state.foregroundRuns?.size || !state.currentSessionId) return undefined;
 	const direct = state.foregroundRuns.get(requested);
@@ -969,13 +972,16 @@ function resolveForegroundResumeTarget(params: SubagentParamsLike, state: Subage
 	if (path.extname(child.sessionFile) !== ".jsonl") throw new Error(`Foreground run '${run.runId}' child ${index} session file must be a .jsonl file: ${child.sessionFile}`);
 	const sessionFile = path.resolve(child.sessionFile);
 	if (!fs.existsSync(sessionFile)) throw new Error(`Foreground run '${run.runId}' child ${index} session file does not exist: ${child.sessionFile}`);
+	const managedCwd = run.managedWorktreeHandoff ? resolveRetainedWorktreeCwd(run.managedWorktreeHandoff, run.runId, index) : undefined;
+	if (run.managedWorktreeHandoff !== undefined && !managedCwd) throw new Error("Managed foreground resume requires its retained worktree ownership evidence");
 	return {
 		runId: run.runId,
 		mode: run.mode,
 		state: "complete",
 		agent: child.agent,
 		index,
-		cwd: run.cwd,
+		cwd: managedCwd ?? run.cwd,
+		...(managedCwd ? { managedWorktree: true, managedWorktreeReference: { path: run.managedWorktreeHandoff!, runId: run.runId, index } } : {}),
 		sessionFile,
 		...(child.model ? { model: child.model } : {}),
 		...(child.thinking ? { thinking: child.thinking } : {}),
@@ -2268,6 +2274,7 @@ async function resumeAsyncRun(input: {
 		// A retained async child already owns the recorded worktree. Resume it in
 		// place rather than allocating a second provider worktree around it.
 		worktree: input.params.worktree === true && !("managedWorktree" in target && target.managedWorktree === true),
+		managedWorktreeReference: "managedWorktreeReference" in target ? target.managedWorktreeReference : undefined,
 		lane: input.params.lane ?? recoveryDescriptor?.lane,
 		controlConfig: resolveRevivalControlConfig({ globalConfig: input.deps.config.control, requestedControl: input.params.control, recoveryControlConfig: recoveryDescriptor?.controlConfig }),
 		intercomBridge: input.params.intercomBridge ?? recoveryDescriptor?.intercomBridge,
@@ -3610,6 +3617,7 @@ async function runAsyncPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 			extensionBindings: params.extensionBindings,
 			acceptance: params.acceptance,
 			timeoutMs: data.timeoutMs,
+			absoluteDeadlineAt: data.deadlineAt,
 			toolBudget: data.toolBudget,
 			usageBudget: data.usageBudget,
 			configToolBudget: data.configToolBudget,
@@ -3644,10 +3652,12 @@ async function createSingleWorktreeSetup(
 	onProgress?: (snapshot: WorktreeSetupProgress) => void,
 	signal?: AbortSignal,
 	deadlineAt?: number,
+	writerIdentity?: WorktreeSetup["writerIdentity"],
 ): Promise<{ setup?: WorktreeSetup; errorResult?: AgentToolResult<Details> }> {
 	try {
 		return {
 			setup: await createWorktrees(cwd, runId, 1, omitUndefinedProperties({
+				writerIdentity,
 				agents: [agent],
 				setupHook: setupHook
 					? { hookPath: setupHook, ...(setupHookTimeoutMs === undefined ? {} : { timeoutMs: setupHookTimeoutMs }) }
@@ -3938,7 +3948,7 @@ async function finalizeSingleWorktreeHandoff(input: {
 }): Promise<{ suffix: string; reference?: NonNullable<Details["parallelHandoff"]> }> {
 	let admitted = false;
 	try {
-		return await withWorktreeTransaction(() => {
+		return await withWorktreeFinalization(input.worktreeSetup, () => {
 			admitted = true;
 			const diffsDir = path.join(input.artifactsDir, "worktree-diffs", input.runId);
 			const diffs = diffWorktrees(input.worktreeSetup, [input.agent], diffsDir);
@@ -4003,7 +4013,7 @@ function retainSingleWorktreeHandoff(input: { worktreeSetup: WorktreeSetup; arti
 		mode: "single", source: "foreground", cwd: input.cwd, stepIndex: 0, flatStartIndex: 0,
 		setup: input.worktreeSetup, diffs: [], results: [],
 		cleanup: { state: "partial", pruned: false, errors: [reason], tasks: input.worktreeSetup.worktrees.map((worktree) => ({
-			index: worktree.index, path: worktree.path, branch: worktree.branch, provider: worktree.provider, naming: worktree.naming,
+			ownership: worktree.ownership, index: worktree.index, path: worktree.path, branch: worktree.branch, provider: worktree.provider, naming: worktree.naming,
 			worktreeRemoved: false, branchRemoved: false, preserved: true, reason,
 		})) },
 	});
@@ -4096,6 +4106,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 
 
 	const sourceCwd = foregroundMachine?.cwd ?? effectiveCwd;
+	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	let pendingHandoff: Details["parallelHandoff"];
 	const { setup: worktreeSetup, errorResult: worktreeSetupError } = params.worktree ? await createSingleWorktreeSetup(
 		sourceCwd,
@@ -4123,7 +4134,9 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			});
 		},
 		signal,
-		data.deadlineAt,
+		deadlineAt,
+		{ rootSessionId: deps.childRuntime?.writerIdentity?.rootSessionId ?? ctx.sessionManager.getSessionId(), runId,
+			ancestors: deps.childRuntime?.writerIdentity ? [...deps.childRuntime.writerIdentity.ancestors, deps.childRuntime.writerIdentity.runId] : [] },
 	) : {};
 	if (worktreeSetupError) {
 		if (pendingHandoff) {
@@ -4137,7 +4150,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		if (!worktreeSetup) return;
 		let admitted = false;
 		try { await withWorktreeTransaction(() => {
-			if (data.deadlineAt !== undefined && Date.now() >= data.deadlineAt) throw new Error("Run deadline expired before unlaunched worktree cleanup");
+			if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw new Error("Run deadline expired before unlaunched worktree cleanup");
 			admitted = true;
 			const cleanup = cleanupWorktrees(worktreeSetup);
 			pendingHandoff = writeParallelHandoffGroup({
@@ -4150,7 +4163,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			pendingHandoff = retainSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd }, error);
 		}
 	};
-	if (worktreeSetup && (signal?.aborted || (data.deadlineAt !== undefined && Date.now() >= data.deadlineAt))) {
+	if (worktreeSetup && (signal?.aborted || (deadlineAt !== undefined && Date.now() >= deadlineAt))) {
 		await cleanupSingleWorktree();
 		return { content: [{ type: "text", text: "Subagent setup canceled before child launch." }], isError: true, details: { mode: "single", results: [], parallelHandoff: pendingHandoff } };
 	}
@@ -4249,7 +4262,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		}
 		: undefined;
 
-	const deadlineAt = data.deadlineAt ?? (data.timeoutMs !== undefined ? Date.now() + data.timeoutMs : undefined);
 	let r: Awaited<ReturnType<typeof runSync>> | undefined;
 	let resolveDetachedWorkflowChild: ((result: Awaited<ReturnType<typeof runSync>>) => void) | undefined;
 	const detachedWorkflowChild = params.workflowAwaitDetached === true
@@ -4271,6 +4283,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 			unknownAgentDiagnosticContext: data.unknownAgentDiagnosticContext,
 			runFanoutBudget: params.runFanoutAdmitted ? data.runFanoutBudget : { ...data.runFanoutBudget, parentPath: `${data.runFanoutBudget.parentPath ? `${data.runFanoutBudget.parentPath}/` : ""}single` },
 			cwd: singleCwd,
+			gitEvidence: Boolean(worktreeSetup),
 			requestedCwd: data.requestedCwd,
 			signal,
 			abortedAsStopped: params.workflowParentRunId !== undefined,
@@ -4325,11 +4338,10 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 					return;
 				}
 				try {
-					if (worktreeSetup) {
-						await finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result, workflowKey: params.workflowKey, lane });
-					}
+					const detachedHandoff = worktreeSetup
+						? await finalizeSingleWorktreeHandoff({ worktreeSetup, artifactsDir, runId, cwd: sourceCwd, agent: params.agent!, result, workflowKey: params.workflowKey, lane }) : undefined;
 					try {
-						updateRememberedForegroundChild(deps.state, { runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
+						updateRememberedForegroundChild(deps.state, { ...(worktreeSetup ? { managedWorktreeHandoff: detachedHandoff?.reference?.path ?? pendingHandoff?.path ?? "" } : {}), runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, index: 0, result, events: deps.pi.events, notify: true });
 					} catch {
 						// Remembered foreground state is best-effort; run history and cleanup must still complete.
 					}
@@ -4425,7 +4437,7 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 		usageBudget: usageBudgetState(data.usageBudget, totalCost),
 		...(worktreeHandoff?.reference ? { parallelHandoff: worktreeHandoff.reference } : {}),
 	}));
-	rememberForegroundRun(deps.state, { modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions });
+	rememberForegroundRun(deps.state, { ...(worktreeSetup ? { managedWorktreeHandoff: worktreeHandoff?.reference?.path ?? pendingHandoff?.path ?? "" } : {}), modelResponseAliases, runId, mode: "single", cwd: singleCwd, sessionId: data.parentSessionId, results: details.results, params, effectiveOutput, effectiveOutputMode, extensionBindings: params.extensionBindings, requiredExtensions });
 
 	const suppressRoutineResultIntercom = shouldSuppressRoutineResultIntercom({ suppressRoutineResultIntercom: params.suppressRoutineResultIntercom, results: [r] });
 	if (!r.detached && !r.interrupted && !suppressRoutineResultIntercom) {
@@ -6658,7 +6670,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						foregroundRunOwnership: (runId: string) => {
 							if (deps.state.foregroundControls.has(runId)) return "active" as const;
 							const remembered = deps.state.foregroundRuns?.get(runId);
-							if (!remembered || remembered.children.length === 0 || remembered.children.some((child) => child.status === "detached")) return "unknown" as const;
+							if (!remembered || remembered.children.length === 0 || remembered.children.some((child) => !["completed", "failed", "paused", "stopped", "rejected"].includes(child.status))) return "unknown" as const;
 							return "terminal" as const;
 						},
 					});
@@ -6678,6 +6690,10 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (decision === "forbid") {
 					return { content: [{ type: "text", text: "Authority policy forbids worktree discard." }], isError: true, details: { mode: "management", results: [] } };
 				}
+				const manifestPath = path.isAbsolute(paramsWithResolvedCwd.handoffPath) ? paramsWithResolvedCwd.handoffPath : path.resolve(requestCwd, paramsWithResolvedCwd.handoffPath);
+				const reviewedManifest = readParallelHandoffManifest(manifestPath);
+				if (!reviewedManifest) throw new Error("Worktree handoff not found");
+				const expectedDigest = stableJsonDigest(reviewedManifest);
 				let confirmed = decision === "auto";
 				if (decision === "confirm") {
 					if (!ctx.hasUI) return { content: [{ type: "text", text: "Authority policy requires user confirmation for worktree discard, but this session has no interactive UI. Preserved worktrees were not changed." }], isError: true, details: { mode: "management", results: [] } };
@@ -6685,11 +6701,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				}
 				if (!confirmed) return { content: [{ type: "text", text: "Worktree discard canceled; preserved worktrees were not changed." }], details: { mode: "management", results: [] } };
 				try {
-					const manifestPath = path.isAbsolute(paramsWithResolvedCwd.handoffPath) ? paramsWithResolvedCwd.handoffPath : path.resolve(requestCwd, paramsWithResolvedCwd.handoffPath);
-					const discarded = await withWorktreeTransaction(() => discardPreservedWorktrees(
+					const discarded = await discardPreservedWorktrees(
 						manifestPath,
 						{ kind: decision === "confirm" ? "confirmed" : "policy", ...(deps.config.authorityPolicy ? { policy: deps.config.authorityPolicy } : {}) },
-					));
+						{ expectedDigest, foregroundRunOwnership: (runId) => {
+							if (deps.state.foregroundControls.has(runId)) return "active";
+							const run = deps.state.foregroundRuns?.get(runId);
+							return run?.children.length && run.children.every((child) => ["completed", "failed", "paused", "stopped", "rejected"].includes(child.status)) ? "terminal" : "unknown";
+						} },
+					);
 					return { content: [{ type: "text", text: discarded.text }], details: { mode: "management", results: [] } };
 				} catch (error) {
 					return { content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }], isError: true, details: { mode: "management", results: [] } };
@@ -7439,13 +7459,6 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		if (externalAgent && (!effectiveAsync || effectiveParams.foregroundOnly === true)) {
 			return buildRequestedModeError(effectiveParams, `Agent '${externalAgent.name}' uses runner.type='${externalAgent.runner?.type}', which currently supports async/background execution only. Omit async or pass async:true; clarify and foregroundOnly are unsupported.`);
 		}
-		if (effectiveAsync && hasSingle && effectiveParams.resume === undefined && effectiveParams.worktree === true) {
-			try {
-				await preflightWorktreeSource(effectiveCwd, { signal });
-			} catch (error) {
-				return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
-			}
-		}
 		const runId = randomUUID();
 		const foregroundTimeout = resolveSingleAgentLaunchTimeout(
 			effectiveParams,
@@ -7453,6 +7466,15 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			resolveConfigDefaultTimeoutMs(deps.config.timeoutMs),
 		);
 		if (foregroundTimeout.error) return buildRequestedModeError(effectiveParams, foregroundTimeout.error);
+		const worktreeDeadlineAt = effectiveParams.worktree === true && foregroundTimeout.timeoutMs !== undefined
+			? Date.now() + foregroundTimeout.timeoutMs : undefined;
+		if (effectiveAsync && hasSingle && effectiveParams.resume === undefined && effectiveParams.worktree === true) {
+			try {
+				await preflightWorktreeSource(effectiveCwd, { signal, deadlineAt: worktreeDeadlineAt });
+			} catch (error) {
+				return toExecutionErrorResult(effectiveParams, error, contextPolicy.contextSummary);
+			}
+		}
 		const controlConfig = resolveControlConfig(deps.config.control, effectiveParams.control);
 		const requestedWorkflowChildAsyncId = typeof effectiveParams.workflowChildAsyncId === "string" ? effectiveParams.workflowChildAsyncId.trim() : "";
 		const asyncRunId = requestedWorkflowChildAsyncId && path.basename(requestedWorkflowChildAsyncId) === requestedWorkflowChildAsyncId
@@ -7646,6 +7668,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 			intercomBridge,
 			nestedRoute,
 			timeoutMs: foregroundTimeout.timeoutMs,
+			deadlineAt: worktreeDeadlineAt,
 			toolBudget: runToolBudget.toolBudget,
 			usageBudget: usageBudget.budget,
 			inheritedUsageBudget,
