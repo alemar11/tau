@@ -80,16 +80,13 @@ test("writer bounds the native queue before writing and propagates backpressure"
   assert.throws(() => writeFrame(sink, { ok: true }), /closed/);
 });
 
-test("protocol validates namespace/version, bounded correlation and specific workgroup arrays", () => {
-  assert.deepEqual(parseRequest({ ...envelope("register", "r"), workgroups: [" a ", "b", "a"] }),
-    { type: "register", requestId: "r", workgroups: ["a", "b"] });
-  assert.deepEqual(parseRequest({ ...envelope("register", "r"), workgroups: [] }).workgroups, ["default"]);
+test("protocol validates namespace/version, bounded correlation and operation fields", () => {
+  const registration = { ...envelope("register", "r"), workgroups: ["a", "b"] };
+  assert.deepEqual(parseRequest(registration), registration);
   for (const value of [null, [], 1, { ...envelope("health", "r"), version: 2 },
     { ...envelope("health", "r"), protocol: "other" }, envelope("health", "é".repeat(129)),
     envelope("health", "bad\0id"), envelope("", "r"), envelope("bad\0type", "r"),
-    { ...envelope("health", "r"), extra: true },
-    { ...envelope("register", "r"), workgroups: ["default"] },
-    { ...envelope("register", "r"), workgroups: [1] }, envelope("register", "r")]) {
+    { ...envelope("health", "r"), extra: true }, { ...envelope("register", "r"), trustedLocal: true }]) {
     assert.throws(() => parseRequest(value));
   }
   assert.equal(parseRequest(envelope("health", "é".repeat(128))).requestId.length, 128);

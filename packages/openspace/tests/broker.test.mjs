@@ -26,29 +26,30 @@ test("Unix health, restrictive permissions and ordered transport handshake witho
   assert.equal(health.status, "ready");
   assert.equal(health.health.instanceId, broker.instanceId);
   assert.equal(health.health.pid, process.pid);
-  assert.deepEqual(health.health.features, ["liveness-v1"]);
+  assert.deepEqual(health.health.features, ["liveness-v1", "session-registry-v1", "lease-resume-v1"]);
   assert.deepEqual(Object.keys(health.health).sort(), ["features", "instanceId", "pid", "protocol", "requestId", "type", "version"]);
   const peer = await raw(t, paths.socketPath);
+  const registration = await peer.registration({ workgroups: ["a", "b", "a"] });
   peer.socket.write(Buffer.concat([
-    encodeFrame({ ...envelope("register", "r"), workgroups: ["a", "b", "a"] }),
+    encodeFrame({ ...envelope("register", "r"), ...registration }),
     encodeFrame(envelope("ping", "p")), encodeFrame(envelope("list", "l")),
   ]));
   const ack = await peer.receive();
   assert.equal(ack.type, "registered");
-  assert.deepEqual(ack.workgroups, ["a", "b"]);
+  assert.deepEqual(ack.session.workgroups, ["a", "b"]);
   assert.equal(ack.requestId, "r");
   assert.equal((await peer.receive()).type, "pong");
-  assert.equal((await peer.receive()).code, "unsupported_operation");
+  assert.equal((await peer.receive()).type, "sessions");
   assert.equal((await peer.request("register", "again", { workgroups: [] })).code, "already_registered");
   await peer.closed;
   await broker.stop(); await broker.stop();
-  assert.deepEqual(readdirSync(paths.runtimeDir), []);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
 });
 
 test("malformed or incompatible peers are isolated while an established peer keeps responding", async (t) => {
   const { paths } = await brokerFixture(t);
   const good = await raw(t, paths.socketPath);
-  await good.request("register", "r", { workgroups: [] });
+  await good.register("r");
   const oversized = Buffer.alloc(4); oversized.writeUInt32BE(MAX_FRAME_BYTES + 1);
   const invalidJson = Buffer.from([0, 0, 0, 1, 0x7b]);
   const invalidUtf8 = Buffer.from([0, 0, 0, 4, 0x22, 0xc3, 0x28, 0x22]);
@@ -68,7 +69,7 @@ test("malformed or incompatible peers are isolated while an established peer kee
     assert.equal((await bad.request(type, "before-register")).code, "registration_required");
   }
   const large = await raw(t, paths.socketPath);
-  assert.equal((await large.request("register", "large", { workgroups: ["x".repeat(6144)] })).code, "registration_too_large");
+  assert.equal((await large.register("large", { workgroups: ["x".repeat(6144)] })).code, "record_too_large");
   assert.equal((await good.request("ping", "after-large")).type, "pong");
 });
 
@@ -92,26 +93,26 @@ test("idle shutdown is cancelled by registration and restarts after the last dis
   const { paths, broker } = await brokerFixture(t, { clock });
   clock.advance(4_999);
   const first = await raw(t, paths.socketPath);
-  await first.request("register", "r1", { workgroups: [] });
+  await first.register("r1");
   clock.advance(50_000);
   assert.equal((await first.request("ping", "alive")).type, "pong");
   first.socket.destroy();
   await until(() => [...clock.timers].some((timer) => timer.at === clock.time + 5_000));
   clock.advance(4_999);
   const second = await raw(t, paths.socketPath);
-  await second.request("register", "r2", { workgroups: [] });
+  await second.register("r2");
   clock.advance(10_000);
   assert.equal((await second.request("ping", "alive-again")).type, "pong");
   second.socket.destroy();
   await until(() => [...clock.timers].some((timer) => timer.at === clock.time + 5_000));
   clock.advance(5_000);
   await broker.closed;
-  assert.deepEqual(readdirSync(paths.runtimeDir), []);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
 });
 
 test("unregistered cap, registration deadline, registered cap and rate refill are enforced", async (t) => {
   const clock = new FakeClock();
-  const { paths } = await brokerFixture(t, { clock, limits: { unregistered: 1, registered: 1, rateCapacity: 3, ratePerSecond: 1 } });
+  const { paths } = await brokerFixture(t, { clock, limits: { unregistered: 1, registered: 1, rateCapacity: 4, ratePerSecond: 1 } });
   const first = await raw(t, paths.socketPath);
   await first.request("health", "h");
   const excess = await raw(t, paths.socketPath);
@@ -119,9 +120,9 @@ test("unregistered cap, registration deadline, registered cap and rate refill ar
   clock.advance(1_000);
   await first.closed;
   const active = await raw(t, paths.socketPath);
-  await active.request("register", "r", { workgroups: [] });
+  await active.register("r");
   const extraSession = await raw(t, paths.socketPath);
-  assert.equal((await extraSession.request("register", "full", { workgroups: [] })).code, "session_limit");
+  assert.equal((await extraSession.register("full")).code, "session_limit");
   await active.request("ping", "p1"); await active.request("ping", "p2");
   clock.advance(1_000);
   assert.equal((await active.request("ping", "refilled")).type, "pong");
@@ -132,7 +133,7 @@ test("unregistered cap, registration deadline, registered cap and rate refill ar
 test("a non-reading peer hits a bounded output queue without stopping other peers", { timeout: 10_000 }, async (t) => {
   const { paths } = await brokerFixture(t, { limits: { outputBytes: 4096, rateCapacity: 10_000 } });
   const slow = await raw(t, paths.socketPath);
-  await slow.request("register", "r", { workgroups: [] });
+  await slow.register("r");
   slow.socket.pause();
   const health = encodeFrame(envelope("health", "x".repeat(256)));
   // One bounded input chunk can produce more output than the test queue budget.

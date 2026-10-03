@@ -87,7 +87,7 @@ test("tarball includes executable runtime, attribution and explicit Pi resources
   assert.equal(packed[0].name, "openspace");
   assert.equal(packed[0].filename, `openspace-${manifest.version}.tgz`);
   const files = new Set(packed[0].files.map((file) => file.path));
-  for (const name of ["cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "extensions/openspace/index.ts", "README.md", "package.json"]) {
+  for (const name of ["cli.mjs", "cli.ts", "src/config.ts", "src/paths.ts", "src/workgroups.ts", "src/broker/main.ts", "src/broker/server.ts", "src/broker/spawn.ts", "src/broker/runtime-files.ts", "src/broker/probe.ts", "src/protocol/framing.ts", "src/protocol/messages.ts", "src/registry/registry.ts", "src/registry/session.ts", "src/registry/leases.ts", "extensions/openspace/index.ts", "README.md", "REGISTRY.md", "package.json"]) {
     assert.ok(files.has(name), `missing ${name}`);
   }
   for (const name of files) assert.doesNotMatch(name, /(^|\/)(tests|fixtures|plans|node_modules|dist|coverage|\.pi)(\/|$)|\.test\.|package-lock|tsconfig/);

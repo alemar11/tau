@@ -1,9 +1,7 @@
 import { OPENSPACE_NAMESPACE, OPENSPACE_PROTOCOL_VERSION } from "../constants.ts";
-import { effectiveWorkgroups, normalizeSpecificWorkgroups } from "../workgroups.ts";
 
-export const FEATURES = ["liveness-v1"] as const;
+export const FEATURES = ["liveness-v1", "session-registry-v1", "lease-resume-v1"] as const;
 export const MAX_REQUEST_ID_BYTES = 256;
-export const MAX_REGISTRATION_BYTES = 6 * 1024;
 
 export function envelope(type: string, requestId?: string) {
   return { type, protocol: OPENSPACE_NAMESPACE, version: OPENSPACE_PROTOCOL_VERSION,
@@ -32,7 +30,7 @@ export class ProtocolError extends Error {
 export interface Request {
   type: string;
   requestId: string;
-  workgroups?: string[];
+  [key: string]: unknown;
 }
 
 export function parseRequest(value: unknown): Request {
@@ -44,20 +42,16 @@ export function parseRequest(value: unknown): Request {
   if (!id || typeof value.type !== "string" || !/^[a-z][a-z0-9_-]{0,63}$/.test(value.type)) {
     throw new ProtocolError("invalid_request", id);
   }
-  const allowed = ["type", "protocol", "version", "requestId"];
-  if (value.type === "register") allowed.push("workgroups");
-  if (["health", "register", "ping"].includes(value.type) && Object.keys(value).some((key) => !allowed.includes(key))) {
+  const fields: Record<string, string[]> = {
+    health: [], ping: [], release: [], prepare: ["id"], register: ["session", "workgroups", "lease", "mode"],
+    list: ["workgroup"], "list-cwd": ["cwd", "workgroup"], resolve: ["to", "cwd", "workgroup"],
+    update: ["expectedRevision", "patch"], "set-workgroups": ["expectedRevision", "workgroups"],
+  };
+  const operation = Object.hasOwn(fields, value.type) ? fields[value.type] : undefined;
+  if (operation && Object.keys(value).some((key) => !["type", "protocol", "version", "requestId", ...operation].includes(key))) {
     throw new ProtocolError("invalid_request", id);
   }
-  if (value.type !== "register") return { type: value.type, requestId: id };
-  if (!Array.isArray(value.workgroups) || value.workgroups.some((group) => typeof group !== "string")) {
-    throw new ProtocolError("invalid_workgroups", id);
-  }
-  try {
-    return { type: value.type, requestId: id, workgroups: effectiveWorkgroups(normalizeSpecificWorkgroups(value.workgroups)) };
-  } catch {
-    throw new ProtocolError("invalid_workgroups", id);
-  }
+  return value as Request;
 }
 
 export interface Health {

@@ -50,10 +50,10 @@ test("concurrent independent launchers start one detached broker and recover dea
   assert.equal(existsSync(privateSocket(paths.runtimeDir, oldOwner)), false);
   assert.equal(existsSync(join(paths.runtimeDir, "spawn.lock")), false);
   const peer = await raw(t, paths.socketPath);
-  assert.equal((await peer.request("register", "r", { workgroups: [] })).type, "registered");
+  assert.equal((await peer.register("r")).type, "registered");
   await terminate(second.pid);
   await peer.closed;
-  assert.deepEqual(readdirSync(paths.runtimeDir), []);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
 });
 
 test("real process exits after five idle seconds even if health probes keep arriving", { timeout: 12_000 }, async (t) => {
@@ -66,7 +66,7 @@ test("real process exits after five idle seconds even if health probes keep arri
     return result.status === "absent" && !processAlive(health.pid);
   }, 8_000);
   assert.ok(performance.now() - start >= 4_000);
-  assert.deepEqual(readdirSync(paths.runtimeDir), []);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
 });
 
 test("live/reused owner PID, corrupt lock and unrelated socket are never evicted", async (t) => {
@@ -125,7 +125,7 @@ test("default launcher ignores a standalone host executable; custom paths/args p
   assert.equal((await probeBroker(paths.socketPath)).status, "ready");
   process.kill(health.pid, "SIGINT");
   await until(() => !processAlive(health.pid));
-  assert.deepEqual(readdirSync(paths.runtimeDir), []);
+  assert.deepEqual(readdirSync(paths.runtimeDir), ["leases.json"]);
   await assert.rejects(launchCommand(defaults, { PATH: "" }, fake), /Node.js 22.19/);
 });
 

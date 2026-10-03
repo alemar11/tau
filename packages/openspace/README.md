@@ -4,9 +4,9 @@ Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `o
 
 ## Stato effettivo
 
-Implementati **package-foundation** e **local-broker**: configurazione, namespace isolati, framing JSON, broker Unix, health, handshake minimo, avvio coordinato e shutdown. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
+Implementati **package-foundation**, **local-broker** e **session-registry**: broker Unix, avvio coordinato, registry a ID unico, discovery, presenza delimitata, mutazioni dei gruppi e fencing persistente del takeover. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
 
-**Non è ancora uno strumento di messaggistica utilizzabile.** Registry applicativo e routing ID, takeover, discovery, send/ask/reply, UI, comandi workgroup, persistenza per sessione, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
+**Non è ancora uno strumento di messaggistica utilizzabile.** Client/reconnect, send/ask/reply, UI, comandi workgroup, persistenza delle preferenze nella sessione Pi, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -56,8 +56,8 @@ Questi sono i default della configurazione. Senza `brokerCommand`, il launcher i
 
 Campi opzionali:
 
-- `stableId`: stringa non vuota, normalizzata con trim. Il futuro routing ID sarà unico nell'intero broker: un valore globale può provocare takeover anche fra workgroup disgiunti.
-- `status`: nota personalizzata, massimo **1 KiB UTF-8**, conservata senza troncamento. Non sostituisce il futuro stato automatico `idle/thinking/tool`. Il limite complessivo del record di presenza da 6 KiB sarà verificato dal registry, non da questo parser isolato.
+- `stableId`: stringa non vuota, normalizzata con trim. Il routing ID è unico nell'intero broker: un valore globale può provocare takeover anche fra workgroup disgiunti. L'adapter Pi non pubblica ancora questo campo.
+- `status`: nota personalizzata, massimo **1 KiB UTF-8**, conservata senza troncamento. Non sostituisce lo stato `idle/thinking/tool`, già validato dal registry ma non ancora prodotto dal lifecycle Pi. Il registry verifica il limite complessivo del record di presenza da 6 KiB.
 
 Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = `steer | human-first`; gli altri flag sono booleani, `brokerArgs` un array di stringhe. Command, argomenti e stable ID rifiutano NUL espliciti. Config assente → default; JSON/campi noti invalidi o errori di lettura → errore con path e campo ove applicabile, mai fallback silenzioso. Le chiavi sconosciute vengono ignorate, non abilitate come funzionalità. Non sono consumate opzioni Herdr/SSH.
 
@@ -67,7 +67,7 @@ Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = 
 
 | Variabile | Default / significato |
 | --- | --- |
-| `PI_OPENSPACE_STABLE_ID` | Override non vuoto normalizzato; il routing effettivo arriverà col registry |
+| `PI_OPENSPACE_STABLE_ID` | Override non vuoto normalizzato; il futuro adapter lo passerà al registry |
 | `PI_OPENSPACE_WORKGROUPS` | Lista specifica separata da virgole; assente/vuota → fallback `default` |
 | `PI_OPENSPACE_ASK_TIMEOUT_MS` | 600000 ms; sarà letto indipendentemente dai processi interessati |
 | `PI_OPENSPACE_LIVENESS_INTERVAL_MS` | 30000 ms |
@@ -81,7 +81,7 @@ Esempio di seed, non ancora di sessioni collegate:
 PI_OPENSPACE_WORKGROUPS=progetto,review pi -e ./packages/openspace
 ```
 
-Il parser applica trim, deduplicazione e confronto esatto case-sensitive; rifiuta componenti vuoti interni, virgole nei singoli nomi e caratteri di controllo. Non tronca i nomi o applica un limite arbitrario per singolo gruppo; i budget del record saranno applicati dal registry. `default` è riservato e non configurabile, nemmeno insieme ad altri nomi: lista specifica vuota → solo `[default]`, altrimenti solo i gruppi specifici.
+Il parser applica trim, deduplicazione e confronto esatto case-sensitive; rifiuta componenti vuoti interni, virgole nei singoli nomi e caratteri di controllo. Non tronca i nomi o applica un limite arbitrario per singolo gruppo; il registry applica il budget al record JSON completo. `default` è riservato e non configurabile, nemmeno insieme ad altri nomi: lista specifica vuota → solo `[default]`, altrimenti solo i gruppi specifici.
 
 La configurazione iniziale **non implementa** ancora `/openspace-workgroups` o la persistenza: le future preferenze della singola sessione, inclusa `[]`, prevarranno sull'ambiente. I workgroup organizzeranno routing/discovery, non autenticheranno peer né isoleranno il contesto del modello.
 
@@ -93,7 +93,7 @@ Per una prova esplicita dal checkout, senza configurazione Pi personale:
 node --import tsx/esm ./packages/openspace/src/broker/main.ts --runtime-dir /tmp/openspace-demo/openspace
 ```
 
-Il processo termina dopo **5 secondi** senza connessioni registrate. Il solo health non prolunga il timer; una registrazione lo annulla e l'ultima disconnessione lo riavvia. SIGINT/SIGTERM chiudono le connessioni e ripuliscono i file posseduti. Non è ancora un sottocomando del bin `openspace`.
+Il processo termina dopo **5 secondi** senza connessioni registrate. Il solo health non prolunga il timer; una registrazione lo annulla e l'ultima disconnessione lo riavvia. SIGINT/SIGTERM chiudono le connessioni e ripuliscono socket/PID posseduti; `leases.json` resta per il fencing dopo restart. Non è ancora un sottocomando del bin `openspace`.
 
 Il socket pubblico è `broker.sock` nella directory runtime. Limite portabile del path: **103 byte UTF-8**, senza fallback TCP; in caso di errore scegliere un agent dir più corto. Directory 0700, socket e record PID/lock 0600. Il socket pubblico è un hard link a un nome privato casuale della stessa istanza, non un secondo listener: la chiusura nativa non può cancellare il socket pubblico di una generazione successiva. Non rimuovere manualmente file mentre un broker è vivo.
 
@@ -106,8 +106,11 @@ Frame: **4 byte uint32 big-endian + JSON UTF-8**, payload massimo **1 MiB**, hea
 Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `requestId` non vuoto, massimo **256 byte UTF-8**, senza controlli ASCII. Operazioni implementate:
 
 - `health` → `health_result`, stesso requestId, versione, PID, instanceId e features; nessun dato di sessione o credenziale.
-- `register` con `workgroups: string[]` specifici → `registered`, connectionId effimero e gruppi effettivi. Lista vuota → `default`; duplicati normalizzati. L'intero acknowledgement rientra in **6 KiB**. Non è ancora un routing ID o un roster; metadata e fencing del registry arriveranno nel task successivo.
-- `ping` dopo register → `pong` correlato. Unica feature annunciata: `liveness-v1`; send esatto e bus estensioni non vengono pubblicizzati.
+- `prepare {id}` → ticket di lease; `register` con lease, mode claim/resume, session e gruppi specifici → `registered` con record completo (massimo **6 KiB**). La lease resta valida per resume soltanto mentre il broker conserva quella ownership.
+- `list`, `list-cwd`, `resolve`, `update`, `set-workgroups`, `release`: registry e mutazioni correlate, con proiezione dei gruppi visibili e revisioni CAS.
+- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`; send esatto e bus estensioni non vengono pubblicizzati.
+
+Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il comportamento del controller Pi dopo il rifiuto sarà implementato separatamente.
 
 Prima di register, operazioni applicative falliscono con `registration_required`; una seconda register chiude il peer con `already_registered`. Operazioni non implementate dopo register restituiscono `unsupported_operation`, mai un falso successo. Nome/versione incompatibili producono `incompatible_protocol`.
 
@@ -115,7 +118,7 @@ Limiti per broker: **128** connessioni registrate, **32** non registrate, deadli
 
 ## Verifiche
 
-I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
+I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout, takeover/restart, roster massimo, status, revisioni, visibilità e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
 
 ```sh
 npm run check
@@ -123,6 +126,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora i percorsi di messaggistica, il registry applicativo o l'integrazione del broker nel lifecycle Pi.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora i percorsi di messaggistica, il reconnect automatico del client o l'integrazione del broker nel lifecycle Pi.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.

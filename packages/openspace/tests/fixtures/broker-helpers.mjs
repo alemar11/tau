@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createConnection } from "node:net";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { resolvePaths } from "../../src/paths.ts";
 import { FrameDecoder, encodeFrame } from "../../src/protocol/framing.ts";
@@ -37,22 +38,31 @@ export async function raw(t, path) {
   const decoder = new FrameDecoder();
   const closed = new Promise((resolve) => socket.once("close", resolve));
   socket.on("data", (bytes) => decoder.push(bytes, (message) => {
-    const waiter = waiters.shift();
-    if (waiter) waiter(message); else messages.push(message);
+    const index = waiters.findIndex((waiter) => waiter.matches(message));
+    if (index >= 0) waiters.splice(index, 1)[0].finish(message); else messages.push(message);
   }));
   t.after(() => socket.destroy());
   await new Promise((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
-  function receive() {
-    if (messages.length) return Promise.resolve(messages.shift());
+  function receive(id) {
+    const matches = (message) => id === undefined || message.requestId === id;
+    const index = messages.findIndex(matches);
+    if (index >= 0) return Promise.resolve(messages.splice(index, 1)[0]);
     return new Promise((resolve, reject) => {
-      const finish = (value) => { clearTimeout(timer); resolve(value); };
-      const timer = setTimeout(() => { const at = waiters.indexOf(finish); if (at >= 0) waiters.splice(at, 1); reject(new Error("response timeout")); }, 2_000);
-      waiters.push(finish);
+      const waiter = { matches, finish: (value) => { clearTimeout(timer); resolve(value); } };
+      const timer = setTimeout(() => { const at = waiters.indexOf(waiter); if (at >= 0) waiters.splice(at, 1); reject(new Error("response timeout")); }, 5_000);
+      waiters.push(waiter);
     });
   }
-  return { socket, closed, receive,
+  return { socket, closed, receive, messages,
     send(type, id, fields = {}) { socket.write(encodeFrame({ ...envelope(type, id), ...fields })); },
-    async request(type, id, fields = {}) { this.send(type, id, fields); return receive(); },
+    async request(type, id, fields = {}) { this.send(type, id, fields); return receive(id); },
+    async registration(fields = {}) {
+      const session = { id: randomUUID(), cwd: dirname(path), model: "fixture", pid: process.pid, ...fields.session };
+      const prepared = fields.lease ? { lease: fields.lease } : await this.request("prepare", randomUUID(), { id: session.id });
+      assert.ok(prepared.lease, "prepare did not return a lease");
+      return { mode: fields.mode ?? "claim", lease: prepared.lease, session, workgroups: fields.workgroups ?? [] };
+    },
+    async register(id, fields = {}) { return this.request("register", id, await this.registration(fields)); },
   };
 }
 
