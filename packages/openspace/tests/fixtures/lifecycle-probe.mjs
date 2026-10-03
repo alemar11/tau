@@ -26,7 +26,7 @@ let result;
 try {
   const { default: openspace } = await import("../../extensions/openspace/index.ts");
   const handlers = new Map();
-  openspace({ on: (event, handler) => {
+  openspace({ registerTool: () => {}, registerMessageRenderer: () => {}, on: (event, handler) => {
     const registered = handlers.get(event) ?? [];
     handlers.set(event, [...registered, handler]);
     return () => handlers.set(event, (handlers.get(event) ?? []).filter((item) => item !== handler));

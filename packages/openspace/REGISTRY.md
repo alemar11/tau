@@ -1,6 +1,6 @@
 # Registry locale — protocollo interno v1
 
-Il broker offre registrazione, discovery, lookup, presenza e mutazioni dei workgroup. Il client e l'[invio di messaggi](DELIVERY.md) usano questo registry; comandi Pi e persistenza delle preferenze nella sessione Pi arrivano nell'adapter. Gli helper sotto `src/registry/` non sono un export API pubblico del package.
+Il broker offre registrazione, discovery, lookup, presenza e mutazioni dei workgroup. Il client e l'[invio di messaggi](DELIVERY.md) usano questo registry; l'adapter Pi collega lifecycle e preferenze della sessione. I comandi interattivi sono un passo successivo. Gli helper sotto `src/registry/` non sono un export API pubblico del package.
 
 Ogni richiesta mantiene l'envelope `type`, `protocol: "openspace"`, `version: 1`, `requestId` (1–256 byte UTF-8, senza controlli ASCII). Frame completo entro 1 MiB. Le risposte correlate conservano il requestId; gli eventi `presence` non ne hanno uno.
 

@@ -1,12 +1,12 @@
 # Openspace
 
-Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `openspace`, versione `0.1.0`, privato; solo **macOS e Linux**, Node.js **22.19+**, target Pi **0.99.1**.
+Package Pi autonomo per la comunicazione locale fra sessioni. Nome npm `openspace`, versione `0.1.0`, privato; solo **macOS e Linux**, Node.js **22.19+**, target Pi **0.99.1**.
 
 ## Stato effettivo
 
-Implementati **package-foundation**, **local-broker**, **session-registry**, **client-recovery** e **message-delivery**: broker Unix, avvio coordinato, registry a ID unico, discovery, presenza delimitata, mutazioni dei gruppi e fencing persistente del takeover. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
+Implementati i passi **01–06**: broker Unix, registry, recovery, delivery e adapter Pi. Il tool `openspace` permette list/list-cwd/status/send/cancel e i messaggi ricevuti entrano nella conversazione rispettando lifecycle e policy.
 
-**La messaggistica core è verificabile fra client, ma non è ancora collegata a Pi o alla CLI.** Adapter Pi, ask/reply, UI, comandi workgroup, persistenza delle preferenze nella sessione Pi, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
+**Ask/reply, UI di composizione, comandi workgroup, API estensioni, CLI operativa e handover non sono ancora disponibili.** Il servizio interno di preferenze per sessione è pronto per i comandi. Le integrazioni esterne rimangono differite; nessuna capacità fittizia viene esposta.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -52,12 +52,12 @@ File opzionale: `$PI_CODING_AGENT_DIR/openspace/config.json`, altrimenti `~/.pi/
 
 Questi sono i default della configurazione. Senza `brokerCommand`, il launcher interno verifica Node.js 22.19+ e risolve `tsx/esm` dal package: niente `npx` o loader cercato nel cwd runtime, né riuso di un eseguibile host standalone come Node. `brokerCommand` opzionale sostituisce l'eseguibile; `brokerArgs` è il suo prefisso di argomenti, seguito dall'entry del broker e da `--runtime-dir <directory>`. Un prefisso non vuoto richiede un comando esplicito. Percorsi con spazi/Unicode vengono passati come argomenti, senza shell.
 
-**Caricare l'estensione non avvia ancora il broker**: il controller arriverà nei task successivi. I campi di delivery non sono ancora operativi. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
+Il factory registra soltanto tool, renderer e handler. **A `session_start` l'estensione abilitata avvia o riusa il broker e si registra**; shutdown/reload/sostituzione chiudono le risorse del vecchio runtime. I comandi configurati sono codice fidato dell'utente, mai testo ricevuto da un peer.
 
 Campi opzionali:
 
-- `stableId`: stringa non vuota, normalizzata con trim. Il routing ID è unico nell'intero broker: un valore globale può provocare takeover anche fra workgroup disgiunti. L'adapter Pi non pubblica ancora questo campo.
-- `status`: nota personalizzata, massimo **1 KiB UTF-8**, conservata senza troncamento. Non sostituisce lo stato `idle/thinking/tool`, già validato dal registry ma non ancora prodotto dal lifecycle Pi. Il registry verifica il limite complessivo del record di presenza da 6 KiB.
+- `stableId`: stringa non vuota, normalizzata con trim. Il routing ID è unico nell'intero broker: un valore globale può provocare takeover anche fra workgroup disgiunti. La precedenza è ambiente, config, ID della sessione Pi.
+- `status`: nota personalizzata, massimo **1 KiB UTF-8**, conservata senza troncamento. Non sostituisce lo stato `idle/thinking/tool`, prodotto dal lifecycle Pi con tool concorrenti tracciati per call ID. Il registry verifica il limite complessivo del record di presenza da 6 KiB.
 
 Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = `steer | human-first`; gli altri flag sono booleani, `brokerArgs` un array di stringhe. Command, argomenti e stable ID rifiutano NUL espliciti. Config assente → default; JSON/campi noti invalidi o errori di lettura → errore con path e campo ove applicabile, mai fallback silenzioso. Le chiavi sconosciute vengono ignorate, non abilitate come funzionalità. Non sono consumate opzioni Herdr/SSH.
 
@@ -67,7 +67,7 @@ Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = 
 
 | Variabile | Default / significato |
 | --- | --- |
-| `PI_OPENSPACE_STABLE_ID` | Override non vuoto normalizzato; il futuro adapter lo passerà al registry |
+| `PI_OPENSPACE_STABLE_ID` | Override non vuoto normalizzato dell'ID di routing |
 | `PI_OPENSPACE_WORKGROUPS` | Lista specifica separata da virgole; assente/vuota → fallback `default` |
 | `PI_OPENSPACE_ASK_TIMEOUT_MS` | 600000 ms; sarà letto indipendentemente dai processi interessati |
 | `PI_OPENSPACE_LIVENESS_INTERVAL_MS` | 30000 ms |
@@ -75,7 +75,7 @@ Valori ammessi: `inboundTrigger` = `always | replies | never`; `busyDelivery` = 
 
 Prefisso `PI_` convenzionale, non interpretazione automatica dell'host. Le variabili vuote/spazi usano il default; i timeout espliciti devono essere interi da 1 a **2147483647 ms** per evitare l'overflow dei timer Node. Valori malformati causano un errore esplicito. Sono lette soltanto le variabili proprie elencate sopra, senza pubblicare l'identità in `process.env`.
 
-Esempio di seed, non ancora di sessioni collegate:
+Esempio di seed per sessioni collegate allo stesso broker:
 
 ```sh
 PI_OPENSPACE_WORKGROUPS=progetto,review pi -e ./packages/openspace
@@ -83,7 +83,7 @@ PI_OPENSPACE_WORKGROUPS=progetto,review pi -e ./packages/openspace
 
 Il parser applica trim, deduplicazione e confronto esatto case-sensitive; rifiuta componenti vuoti interni, virgole nei singoli nomi e caratteri di controllo. Non tronca i nomi o applica un limite arbitrario per singolo gruppo; il registry applica il budget al record JSON completo. `default` è riservato e non configurabile, nemmeno insieme ad altri nomi: lista specifica vuota → solo `[default]`, altrimenti solo i gruppi specifici.
 
-La configurazione iniziale **non implementa** ancora `/openspace-workgroups` o la persistenza: le future preferenze della singola sessione, inclusa `[]`, prevarranno sull'ambiente. I workgroup organizzeranno routing/discovery, non autenticheranno peer né isoleranno il contesto del modello.
+Il servizio interno salva preferenze versionate tramite entry Pi `openspace_workgroups`, legate all'ID Pi e non al routing ID o al ramo. La scelta salvata, inclusa `[]`, prevale sul seed. Reload/resume la ripristinano; fork/nuova sessione con ID diverso ignorano entry copiate. `/openspace-workgroups` arriva nel passo 08. Nessuna mutazione di env o config globali. Un errore di salvataggio è esplicito: i gruppi live già accettati restano autorevoli, senza rollback che riaprirebbe le operazioni annullate. `saved` indica accettazione dell'entry da Pi, non fsync; sessioni in-memory restano effimere. I workgroup organizzano routing/discovery, non autenticano peer né isolano il contesto del modello.
 
 ## Broker locale: stato e limiti
 
@@ -110,7 +110,7 @@ Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `request
 - `list`, `list-cwd`, `resolve`, `update`, `set-workgroups`, `release`: registry e mutazioni correlate, con proiezione dei gruppi visibili e revisioni CAS.
 - `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`, `delivery-v1`, `exact-send-v1`; ask e bus estensioni non vengono pubblicizzati.
 
-Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il controller core ferma retry e reconnect impliciti dopo il rifiuto; il collegamento al lifecycle e all'avviso Pi arriva nell'adapter.
+Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il controller core ferma retry e reconnect impliciti dopo il rifiuto; l'adapter avvisa e lascia proseguire Pi, senza reclamare nuovamente l'ID.
 
 Prima di register, operazioni applicative falliscono con `registration_required`; una seconda register chiude il peer con `already_registered`. Operazioni non implementate dopo register restituiscono `unsupported_operation`, mai un falso successo. Nome/versione incompatibili producono `incompatible_protocol`.
 
@@ -130,6 +130,20 @@ Le mutazioni usano revisioni CAS, coda seriale e riconciliazione dopo un esito i
 
 `Messenger` supporta invio esatto, allegati testuali, replay limitato, mailbox RAM, ricevute e controlli. Il [contratto di delivery](DELIVERY.md) descrive i limiti, il binding al gruppo, gli esiti incerti, la recovery per identità e la distinzione fra cancellare una coda e chiedere l'annullamento di qualcosa già passato al receiver. Nessuna consegna viene descritta come completamento del lavoro.
 
+## Consegna in Pi
+
+Il tool `openspace` ha schema stabile e risultati `content`/`details`; errori e risultati incerti sono marcati `isError`. `send` conserva `messageId`, `supersedes` e `retryOf`; gli allegati trasportano testo, non letture remote. `confirmSend` richiede conferma TUI/RPC; senza dialoghi disponibili l'invio è bloccato. Cancel richiede `messageId` e il `workgroup` originario.
+
+- Idle: `always` avvia un turno; `never` appende senza avvio. `replies` per ora non avvia: la correlazione reply arriva nel passo 07.
+- Run TUI: `steer` usa la coda Pi, **anche con `inboundTrigger: never`**. Questa opzione non è un firewall.
+- `human-first`: FIFO esterna, al massimo un peer per turno, soltanto senza input umano pendente; non scarica l'intera coda quando torna idle. Input continuo può ritardare i peer fino alla scadenza.
+- Compattazione o busy senza run: hold fino a un confine sicuro; controllo ogni 250 ms soltanto mentre ci sono held, anche se manca una notifica finale.
+- Run print/JSON/RPC: nessuna interruzione; il messaggio ordinario riceve best effort un nuovo avviso busy, senza `replyTo` inventato o dialoghi automatici. RPC non equivale a un terminale TUI.
+
+Held: **256 messaggi / 8 MiB / 10 minuti**. Dedupe: **1000 record / 1 ora**, chiave workgroup+sender+ID. Overflow/scadenza producono ricevute diagnostiche. `injected` significa passato all'API Pi, non risposta o completamento del modello. Cancel/supersede/uscita da un gruppo rimuovono soltanto contenuti ancora posseduti da Openspace; history e code già consegnate a Pi non vengono modificate. Leave/rejoin non riabilita callback vecchie; disconnect ordinario non è leave. Shutdown scade gli held e invalida timer, conferme e callback.
+
+Il custom message `openspace_message` conserva dettagli, gruppo, provenienza e allegati. Pi lo converte in contenuto user-role attribuito al peer, non in istruzioni di sistema o input umano. La history diagnostica degli invii è `openspace_sent`. Dedupe/held non vengono ricreati da history dopo reload. `replyHint` diventerà operativo con ask/reply.
+
 ## Verifiche
 
 I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout, takeover/restart, roster massimo, status, revisioni, visibilità e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
@@ -140,6 +154,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora ask/reply o la consegna nel lifecycle Pi.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Le fixture `AgentSession` reali usano un provider locale controllato: idle/steer, priorità umana, compattazione riuscita/fallita/annullata, headless, tool, fork/new/resume/reload e preferenze isolate. Ask/reply resta da verificare nel passo successivo.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.
