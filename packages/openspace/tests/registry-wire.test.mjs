@@ -32,7 +32,7 @@ test("wire registry deduplicates multigroup peers, projects memberships and corr
   assert.equal(resolved.workgroup, "y");
   for (const to of ["hidden", "absent"]) assert.equal((await a.request("resolve", to, { to })).code, "target_not_found");
   assert.equal((await a.request("list", "private", { workgroup: "private" })).code, "workgroup_not_shared");
-  assert.equal((await a.request("send", "unsupported")).code, "unsupported_operation");
+  assert.equal((await a.request("send", "missing-fields")).code, "invalid_message");
   assert.ok(!JSON.stringify(result).includes("lease"));
 });
 

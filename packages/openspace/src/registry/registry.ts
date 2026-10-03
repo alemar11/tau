@@ -49,6 +49,17 @@ export class SessionRegistry {
   }
   session(endpoint: string): SessionInfo { return structuredClone(this.owned(endpoint).record); }
   connections(): string[] { return [...this.endpoints.keys()]; }
+  endpoint(id: string): string | undefined { return this.runtimes.get(id)?.endpoint; }
+  known(): SessionInfo[] {
+    return [...this.runtimes.values()].filter((runtime) => runtime.endpoint || this.leases.owns(runtime.record.id, runtime.leaseHash))
+      .map((runtime) => structuredClone(runtime.record));
+  }
+  membershipForId(id: string, group: string): MembershipStamp {
+    const runtime = this.runtimes.get(id);
+    const epoch = runtime?.groupEpochs.get(group);
+    if (!runtime || !epoch || !runtime.endpoint && !this.leases.owns(id, runtime.leaseHash)) throw new RegistryError("workgroup_left");
+    return { id, leaseHash: runtime.leaseHash, group, epoch };
+  }
 
   register(endpoint: string, input: unknown, workgroups: unknown, lease: unknown, mode: unknown): Mutation {
     if (this.endpoints.has(endpoint)) throw new RegistryError("already_registered");
@@ -143,11 +154,12 @@ export class SessionRegistry {
     if (!viewer.workgroups.includes(group)) throw new RegistryError("workgroup_not_shared");
     return group;
   }
-  resolve(endpoint: string, selector: Selector): { session: SessionInfo; workgroup: string } {
+  resolve(endpoint: string, selector: Selector, includeOffline = false): { session: SessionInfo; workgroup: string } {
     const viewer = this.owned(endpoint).record;
     this.validateSelector(selector);
     const group = this.filterGroup(viewer, selector.workgroup);
-    const visible = this.list(endpoint, { workgroup: group });
+    const visible = includeOffline ? this.known().map((peer) => project(viewer, peer))
+      .filter((peer): peer is SessionInfo => !!peer && (!group || peer.workgroups.includes(group))) : this.list(endpoint, { workgroup: group });
     let matches = visible;
     if (selector.to !== undefined) {
       const to = text(selector.to);

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { milliseconds, systemClock, type Clock } from "../clock.ts";
-import { FrameDecoder, writeFrame } from "../protocol/framing.ts";
+import { parseMessage, parseRef, RECEIPTS } from "../protocol/delivery.ts";
+import { encodeFrame, FrameDecoder, writeEncodedFrame } from "../protocol/framing.ts";
 import { envelope, isHealth, requestId } from "../protocol/messages.ts";
 import { normalizeSpecificWorkgroups } from "../workgroups.ts";
 import { text, type SessionInfo } from "../registry/session.ts";
@@ -205,6 +206,9 @@ export class OpenspaceClient {
     let timeout: number;
     try { timeout = milliseconds(options.timeoutMs ?? this.options.requestTimeoutMs ?? 5_000); }
     catch (error) { return Promise.reject(new ClientError("invalid_timeout", { cause: error })); }
+    let frame: Buffer;
+    try { frame = encodeFrame({ ...fields, ...envelope(type, id) }); }
+    catch (error) { return Promise.reject(new ClientError("frame_too_large", { cause: error })); }
     if (options.requestId) this.usedIds.add(id);
     return new Promise((resolve, reject) => {
       const finish = (error?: ClientError, value?: Record<string, unknown>) => {
@@ -216,7 +220,7 @@ export class OpenspaceClient {
       const cancel = this.clock.after(timeout, () => finish(new ClientError("timeout", { outcomeKnown: false })));
       this.pending.set(id, { finish, options });
       options.signal?.addEventListener("abort", abort, { once: true });
-      try { writeFrame(socket, { ...fields, ...envelope(type, id) }); }
+      try { writeEncodedFrame(socket, frame); }
       catch (error) { finish(new ClientError("write_failed", { cause: error, outcomeKnown: false })); }
     });
   }
@@ -236,9 +240,20 @@ export class OpenspaceClient {
       pending.options.accept?.(value);
       pending.finish(undefined, value);
     } else {
-      if (this.state !== "registered" || value.type !== "presence") throw new ClientError("invalid_response");
-      if (value.event === "joined" || value.event === "updated") session(value.session);
-      else if (value.event !== "left" || typeof value.id !== "string" || typeof value.endpointEpoch !== "string") throw new ClientError("invalid_response");
+      if (this.state !== "registered") throw new ClientError("invalid_response");
+      if (value.type === "presence") {
+        if (value.event === "joined" || value.event === "updated") session(value.session);
+        else if (value.event !== "left" || typeof value.id !== "string" || typeof value.endpointEpoch !== "string") throw new ClientError("invalid_response");
+      } else if (value.type === "message") {
+        if (parseMessage(value.message).recipientId !== this.current?.id) throw new ClientError("invalid_response");
+      } else if (value.type === "receipt") {
+        const receipt = value.receipt as Record<string, unknown> | undefined;
+        if (!receipt || !RECEIPTS.includes(receipt.status as never) || !Number.isSafeInteger(receipt.timestamp)) throw new ClientError("invalid_response");
+        parseRef(receipt.ref);
+      } else if (value.type === "message_control") {
+        parseRef(value.ref);
+        if (value.action !== "cancelled" && value.action !== "superseded") throw new ClientError("invalid_response");
+      } else throw new ClientError("invalid_response");
       this.emit({ type: "wire", message: value });
     }
   }

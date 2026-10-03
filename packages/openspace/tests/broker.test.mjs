@@ -26,7 +26,7 @@ test("Unix health, restrictive permissions and ordered transport handshake witho
   assert.equal(health.status, "ready");
   assert.equal(health.health.instanceId, broker.instanceId);
   assert.equal(health.health.pid, process.pid);
-  assert.deepEqual(health.health.features, ["liveness-v1", "session-registry-v1", "lease-resume-v1"]);
+  assert.deepEqual(health.health.features, ["liveness-v1", "session-registry-v1", "lease-resume-v1", "delivery-v1", "exact-send-v1"]);
   assert.deepEqual(Object.keys(health.health).sort(), ["features", "instanceId", "pid", "protocol", "requestId", "type", "version"]);
   const peer = await raw(t, paths.socketPath);
   const registration = await peer.registration({ workgroups: ["a", "b", "a"] });

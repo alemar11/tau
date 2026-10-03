@@ -64,7 +64,10 @@ export interface FrameSink {
 
 /** Node owns the write queue; never enqueue past the per-peer budget. */
 export function writeFrame(socket: FrameSink, message: unknown, budget = MAX_OUTPUT_BYTES): boolean {
-  const frame = encodeFrame(message);
+  return writeEncodedFrame(socket, encodeFrame(message), budget);
+}
+
+export function writeEncodedFrame(socket: FrameSink, frame: Buffer, budget = MAX_OUTPUT_BYTES): boolean {
   if (socket.destroyed || socket.writableLength + frame.length > budget) {
     throw new Error("Peer output budget exceeded or connection closed");
   }

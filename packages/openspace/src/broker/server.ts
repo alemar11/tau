@@ -10,6 +10,7 @@ import { SessionRegistry, type Mutation, type Transition } from "../registry/reg
 import { project, RegistryError, type SessionInfo } from "../registry/session.ts";
 import { acquireClaim, identity, prepareRuntime, privateSocket, sameFile, unlinkOwned } from "./runtime-files.ts";
 import { probeBroker } from "./probe.ts";
+import { DeliveryService, type DeliveryOptions } from "./delivery.ts";
 
 import { systemClock, type Clock } from "../clock.ts";
 export { systemClock, type Clock } from "../clock.ts";
@@ -17,7 +18,7 @@ export const BROKER_LIMITS = {
   idleMs: 5_000, registrationMs: 1_000, unregistered: 32, registered: 128,
   rateCapacity: 240, ratePerSecond: 120, outputBytes: MAX_OUTPUT_BYTES,
 };
-export interface BrokerOptions { clock?: Clock; limits?: Partial<typeof BROKER_LIMITS>; leases?: LeaseOptions }
+export interface BrokerOptions { clock?: Clock; limits?: Partial<typeof BROKER_LIMITS>; leases?: LeaseOptions; delivery?: DeliveryOptions }
 export interface Broker { readonly instanceId: string; readonly closed: Promise<void>; stop(): Promise<void> }
 interface Peer { socket: Socket; active: boolean; close(): void; reject(code: string, requestId?: string): void }
 
@@ -35,9 +36,11 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
   let socketIdentity: ReturnType<typeof identity>;
   const peers = new Map<string, Peer>();
   let registry: SessionRegistry;
+  let delivery: DeliveryService;
   let unregistered = 0;
   let cancelIdle: (() => void) | undefined;
   let cancelCheckpoint: (() => void) | undefined;
+  let cancelDelivery: (() => void) | undefined;
   let stopping = false;
   let resolveClosed!: () => void;
   let rejectClosed!: (error: unknown) => void;
@@ -45,6 +48,12 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
   // Startup can fail before a caller receives the handle.
   void closed.catch(() => {});
 
+  function forward(endpoint: string, message: unknown): "written" | "offline" | "unknown" {
+    const peer = peers.get(endpoint);
+    if (!peer?.active || peer.socket.destroyed || !peer.socket.writable || peer.socket.writableEnded) return "offline";
+    try { writeFrame(peer.socket, message, limits.outputBytes); return "written"; }
+    catch { peer.socket.destroy(); return "unknown"; }
+  }
   function presence(endpoint: string, before?: SessionInfo, after?: SessionInfo) {
     const peer = peers.get(endpoint);
     if (!peer?.active || JSON.stringify(before) === JSON.stringify(after)) return;
@@ -76,6 +85,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
           change.after ? project(viewer, change.after) : undefined);
       }
     }
+    delivery.transition(change);
   }
   const server = createServer((socket) => {
     socket.on("error", () => socket.destroy());
@@ -157,6 +167,16 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
                   send({ ...envelope("sessions", request.requestId), sessions: registry.list(endpoint, { cwd: request.cwd, workgroup: request.workgroup }) }); break;
                 case "resolve":
                   send({ ...envelope("resolved", request.requestId), ...registry.resolve(endpoint, { to: request.to, cwd: request.cwd, workgroup: request.workgroup }) }); break;
+                case "resolve-send": {
+                  const target = registry.resolve(endpoint, { to: request.to, cwd: request.cwd, workgroup: request.workgroup }, true);
+                  send({ ...envelope("resolved", request.requestId), ...target, connected: !!registry.endpoint(target.session.id),
+                    membershipEpoch: registry.membershipForId(target.session.id, target.workgroup).epoch,
+                    senderMembershipEpoch: registry.membership(endpoint, target.workgroup).epoch });
+                  break;
+                }
+                case "send": send({ ...envelope("delivery_result", request.requestId), result: delivery.send(endpoint, request) }); break;
+                case "receipt": send({ ...envelope("receipt_result", request.requestId), receipt: delivery.receipt(endpoint, request.receipt) }); break;
+                case "cancel": send({ ...envelope("control_result", request.requestId), ...delivery.cancel(endpoint, request.ref) }); break;
                 case "update": mutation = registry.update(endpoint, request.expectedRevision, request.patch); break;
                 case "set-workgroups": mutation = registry.setWorkgroups(endpoint, request.expectedRevision, request.workgroups); break;
                 default: send({ ...envelope("error", request.requestId), code: "unsupported_operation" });
@@ -192,6 +212,11 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
     catch { void stop(); return; }
     cancelCheckpoint = clock.after(LEASE_CHECKPOINT_MS, checkpoint);
   }
+  function maintainDelivery() {
+    if (stopping) return;
+    delivery.prune();
+    cancelDelivery = clock.after(Math.min(60_000, options.delivery?.limits?.mailboxMs ?? 60_000, options.delivery?.limits?.replayMs ?? 60_000), maintainDelivery);
+  }
   function cleanup() {
     try {
       // libuv unlinks its bind path on close. The public hard link is separately
@@ -209,6 +234,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
     stopping = true;
     cancelIdle?.();
     cancelCheckpoint?.();
+    cancelDelivery?.();
     for (const peer of peers.values()) peer.socket.destroy();
     if (server.listening) server.close(cleanup);
     else cleanup();
@@ -232,6 +258,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
       if (old && lstatSync(previousSocket).isSocket()) unlinkOwned(previousSocket, old);
     }
     registry = new SessionRegistry(new LeaseStore(paths.runtimeDir, options.leases), paths.runtimeDir, options.leases?.now, limits.registered);
+    delivery = new DeliveryService(registry, forward, options.delivery);
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(ownedSocket, () => { server.off("error", reject); resolve(); });
@@ -241,6 +268,7 @@ export async function startBroker(paths: OpenspacePaths, options: BrokerOptions 
     // link() publishes without replacing an endpoint that won a concurrent start.
     linkSync(ownedSocket, paths.socketPath);
     armIdle();
+    maintainDelivery();
     cancelCheckpoint = clock.after(LEASE_CHECKPOINT_MS, checkpoint);
     return { instanceId: claim.owner.token, closed, stop };
   } catch (error) {

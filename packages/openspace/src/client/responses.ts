@@ -8,7 +8,7 @@ export class ClientError extends Error {
   constructor(code: string, options: { retryable?: boolean; outcomeKnown?: boolean; cause?: unknown } = {}) {
     super(code, { cause: options.cause });
     this.code = code;
-    this.retryable = options.retryable ?? ["disconnected", "connect_failed", "timeout", "session_limit", "lease_capacity", "storage_failed", "connection_replaced", "outcome_unknown"].includes(code);
+    this.retryable = options.retryable ?? ["disconnected", "connect_failed", "timeout", "session_limit", "lease_capacity", "storage_failed", "connection_replaced", "write_failed", "outcome_unknown"].includes(code);
     this.outcomeKnown = options.outcomeKnown ?? true;
   }
 }

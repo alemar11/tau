@@ -1,6 +1,6 @@
 # Registry locale — protocollo interno v1
 
-Il broker offre registrazione, discovery, lookup, presenza e mutazioni dei workgroup. Non implementa ancora invio di messaggi, client/reconnect, comandi Pi o persistenza delle preferenze nella sessione Pi. Gli helper sotto `src/registry/` non sono un export API pubblico del package.
+Il broker offre registrazione, discovery, lookup, presenza e mutazioni dei workgroup. Il client e l'[invio di messaggi](DELIVERY.md) usano questo registry; comandi Pi e persistenza delle preferenze nella sessione Pi arrivano nell'adapter. Gli helper sotto `src/registry/` non sono un export API pubblico del package.
 
 Ogni richiesta mantiene l'envelope `type`, `protocol: "openspace"`, `version: 1`, `requestId` (1–256 byte UTF-8, senza controlli ASCII). Frame completo entro 1 MiB. Le risposte correlate conservano il requestId; gli eventi `presence` non ne hanno uno.
 
@@ -73,4 +73,4 @@ Sul medesimo broker, resume conserva i metadati e gruppi più recenti del regist
 - Cwd: normalizzazione lessicale e realpath dei percorsi esistenti; path non più esistenti restano lessicali. Cwd relativo in register è relativo alla directory runtime; nei filtri è relativo al cwd registrato del richiedente. I client dovrebbero pubblicare cwd assoluti. I selettori combinati hanno un budget JSON di 6 KiB e non vengono riflessi negli errori.
 - `presence` con event joined/updated porta un record proiettato; left porta id ed endpointEpoch. Una mutazione aggiorna la visibilità di entrambi i lati senza duplicare peer multigruppo. L'ack al chiamante precede i suoi eventi. Gli eventi non sono durevoli: dopo reconnect leggere list.
 
-Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`. Send e bus estensioni non sono ancora annunciati. Tutto questo è coordinamento cooperativo fra processi dello stesso utente: un nuovo runtime locale può ancora preparare una nuova claim e sostituire un ID; non è un sistema di autenticazione o una sandbox.
+Features di registry: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`. Il broker annuncia anche `delivery-v1` e `exact-send-v1`; il bus estensioni non è ancora disponibile. Tutto questo è coordinamento cooperativo fra processi dello stesso utente: un nuovo runtime locale può ancora preparare una nuova claim e sostituire un ID; non è un sistema di autenticazione o una sandbox.

@@ -4,9 +4,9 @@ Package Pi autonomo per la futura comunicazione locale fra sessioni. Nome npm `o
 
 ## Stato effettivo
 
-Implementati **package-foundation**, **local-broker**, **session-registry** e **client-recovery**: broker Unix, avvio coordinato, registry a ID unico, discovery, presenza delimitata, mutazioni dei gruppi e fencing persistente del takeover. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
+Implementati **package-foundation**, **local-broker**, **session-registry**, **client-recovery** e **message-delivery**: broker Unix, avvio coordinato, registry a ID unico, discovery, presenza delimitata, mutazioni dei gruppi e fencing persistente del takeover. Il broker è verificabile separatamente da Pi; non è ancora collegato all'estensione, che valida la configurazione a `session_start` senza aprire connessioni, processi, watcher o timer.
 
-**Non è ancora uno strumento di messaggistica utilizzabile.** Send/ask/reply, UI, comandi workgroup, persistenza delle preferenze nella sessione Pi, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
+**La messaggistica core è verificabile fra client, ma non è ancora collegata a Pi o alla CLI.** Adapter Pi, ask/reply, UI, comandi workgroup, persistenza delle preferenze nella sessione Pi, API estensioni e handover sono ancora da implementare. Le integrazioni esterne rimangono differite. Non sono esposti tool o comandi Pi fittizi, skill o export API verso file inesistenti.
 
 Il bin riserva il nome `openspace`: `--help` e `--version` funzionano; altri argomenti terminano con codice **2**, errore su stderr e nessun invio. Nessun contratto JSON della CLI è ancora disponibile.
 
@@ -108,7 +108,7 @@ Ogni richiesta contiene `type`, `protocol: "openspace"`, `version: 1` e `request
 - `health` → `health_result`, stesso requestId, versione, PID, instanceId e features; nessun dato di sessione o credenziale.
 - `prepare {id}` → ticket di lease; `register` con lease, mode claim/resume, session e gruppi specifici → `registered` con record completo (massimo **6 KiB**). La lease resta valida per resume soltanto mentre il broker conserva quella ownership.
 - `list`, `list-cwd`, `resolve`, `update`, `set-workgroups`, `release`: registry e mutazioni correlate, con proiezione dei gruppi visibili e revisioni CAS.
-- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`; send esatto e bus estensioni non vengono pubblicizzati.
+- `ping` dopo register → `pong` correlato. Features: `liveness-v1`, `session-registry-v1`, `lease-resume-v1`, `delivery-v1`, `exact-send-v1`; ask e bus estensioni non vengono pubblicizzati.
 
 Il [contratto del registry](REGISTRY.md) descrive schema, retention delle lease, revoca, limiti, lookup ed eventi. La notifica di takeover è best effort, ma il rifiuto del ticket revocato sopravvive alla sua perdita e al restart. Il controller core ferma retry e reconnect impliciti dopo il rifiuto; il collegamento al lifecycle e all'avviso Pi arriva nell'adapter.
 
@@ -126,6 +126,10 @@ Heartbeat dedicato ping/pong: 30 secondi, timeout 5 secondi clamped all'interval
 
 Le mutazioni usano revisioni CAS, coda seriale e riconciliazione dopo un esito incerto. `mutateWorkgroups` applica una trasformazione alla lista corrente, senza perdere aggiunte concorrenti. Gli stamp per gruppo sopravvivono al disconnect sullo stesso broker; leave/rejoin e restart li invalidano. Uno stamp valido non basta a dimostrare che il socket sia connesso. Reconnect non reinvia automaticamente contenuti.
 
+## Messaggistica core
+
+`Messenger` supporta invio esatto, allegati testuali, replay limitato, mailbox RAM, ricevute e controlli. Il [contratto di delivery](DELIVERY.md) descrive i limiti, il binding al gruppo, gli esiti incerti, la recovery per identità e la distinzione fra cancellare una coda e chiedere l'annullamento di qualcosa già passato al receiver. Nessuna consegna viene descritta come completamento del lavoro.
+
 ## Verifiche
 
 I test vivono in `tests/`, fuori dalla discovery Pi. Coprono configurazione, framing segmentato e boundary UTF-8, handshake, quote/rate/output, clock controllato, processi reali concorrenti, recovery, segnali, timeout, takeover/restart, roster massimo, status, revisioni, visibilità e packaging. Il manifest dichiara un solo entry point Pi; il processo broker non viene scoperto come estensione.
@@ -136,6 +140,6 @@ npm test
 npm pack --dry-run --json --workspace openspace
 ```
 
-Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora i percorsi di messaggistica o l'integrazione del broker nel lifecycle Pi.
+Check e test root orchestrano i workspace. I test non dipendono dai file temporanei dello studio né scrivono nella configurazione personale. Queste prove non dimostrano ancora ask/reply o la consegna nel lifecycle Pi.
 
 Il package è distribuito con licenza MIT; gli avvisi applicabili sono conservati nei sorgenti.
