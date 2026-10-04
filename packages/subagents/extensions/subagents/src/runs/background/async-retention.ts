@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import type { AsyncStatus } from "../../shared/types.ts";
+import { HERDR_MANAGED_REFERENCE, type AsyncStatus } from "../../shared/types.ts";
 import { readMissionBinding, type MissionLaunchBinding } from "../../missions/lifecycle.ts";
 import { MissionNotFoundError, readMission } from "../../missions/store.ts";
 import type { MissionStatus } from "../../missions/types.ts";
@@ -333,6 +333,9 @@ function runSkipReason(input: {
 	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";
 	if (hasInspectorReferences(runDir)) return "inspector-reference";
+	// Presence (including malformed/dangling evidence) blocks automatic reclamation.
+	try { fs.lstatSync(path.join(runDir, HERDR_MANAGED_REFERENCE)); return "managed-placement-reference"; }
+	catch (error) { if (!isNotFound(error)) return "managed-placement-reference"; }
 	if (hasResumableContract(runDir, status)) return "resumable";
 	const timestamp = statusTimestamp(status, runDir);
 	if (timestamp === undefined) return "unknown-age";

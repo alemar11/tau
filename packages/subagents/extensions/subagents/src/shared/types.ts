@@ -2850,6 +2850,7 @@ const configuredTempRoot = process.env.TAU_SUBAGENTS_TEMP_ROOT?.trim();
 export const TEMP_ROOT_DIR = configuredTempRoot
 	? path.resolve(configuredTempRoot)
 	: path.join(os.tmpdir(), `tau-subagents-${resolveTempScopeId()}`);
+export const HERDR_MANAGED_REFERENCE = "managed-placement.json";
 export const RESULTS_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-results");
 export const ASYNC_DIR = path.join(TEMP_ROOT_DIR, "async-subagent-runs");
 export const CHAIN_RUNS_DIR = path.join(TEMP_ROOT_DIR, "chain-runs");

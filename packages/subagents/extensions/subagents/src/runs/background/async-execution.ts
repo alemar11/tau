@@ -258,6 +258,10 @@ interface AsyncChainParams {
 }
 
 interface AsyncSingleParams {
+	/** Internal managed host: publish outside the coordinator's consumable result mailbox. */
+	retainedResultPath?: string;
+	/** Persist the managed owner's receipt before the startup barrier authorizes a child. */
+	onRunnerStarted?: (runnerProcessInstanceId: string) => void;
 	managedWorktreeReference?: SteeringRecoveryDescriptor["managedWorktreeReference"];
 	agent: string;
 	task?: string;
@@ -267,7 +271,8 @@ interface AsyncSingleParams {
 	/** Agent contract before per-run bridge injection, used only for recovery persistence. */
 	recoveryAgentConfig?: AgentConfig;
 	requiredExtensions?: RequiredChildExtensionSnapshot;
-	ctx: AsyncExecutionContext;
+	/** Single-run hosts need only the event bus, not a fabricated Pi session API. */
+	ctx: Omit<AsyncExecutionContext, "pi"> & { pi: Pick<ExtensionAPI, "events"> };
 	cwd?: string;
 	requestedCwd?: string;
 	machine?: string;
@@ -646,7 +651,7 @@ function isStaleExtensionContextError(error: unknown): boolean {
 	return error instanceof Error && /extension ctx is stale|stale after session replacement or reload/i.test(error.message);
 }
 
-export function emitProcessTerminalEvent(ctx: AsyncExecutionContext, proof: unknown): void {
+export function emitProcessTerminalEvent(ctx: { pi: Pick<ExtensionAPI, "events"> }, proof: unknown): void {
 	try {
 		ctx.pi.events.emit(SUBAGENT_PROCESS_TERMINAL_EVENT, proof);
 	} catch (error) {
@@ -738,6 +743,8 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, initialStatus: Om
 		const runnerEnv: NodeJS.ProcessEnv = {
 			...omitGitRoutingEnv(omitExtensionBindingsEnv(process.env)),
 			...childCacheRetentionEnv(),
+			// Launch paths and leases must use the namespace captured by this dispatcher.
+			TAU_SUBAGENTS_TEMP_ROOT: TEMP_ROOT_DIR,
 			[PI_CODING_AGENT_PACKAGE_ROOT_ENV]: binaryHost ? undefined : piPackageRoot,
 			// npm must override inherited bundled layouts (#2071); binaries retain release assets.
 			PI_PACKAGE_DIR: binaryHost ? process.env.PI_PACKAGE_DIR : piPackageRoot,
@@ -2166,9 +2173,9 @@ export function executeAsyncSingle(
 						...(params.managedWorktreeReference ? { managedWorktreeReference: params.managedWorktreeReference, gitEvidence: true } : {}),
 					},
 				],
-				resultPath: params.parentWorkflowRunId !== undefined && (params.revivalLease !== undefined || params.workflowAwaitAsync === true)
+				resultPath: params.retainedResultPath ?? (params.parentWorkflowRunId !== undefined && (params.revivalLease !== undefined || params.workflowAwaitAsync === true)
 					? workflowAwaitedAsyncResultPath(asyncDir)
-					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id),
+					: inheritedNestedRoute ? nestedResultsPath(inheritedNestedRoute.rootRunId, id) : resultFilePath(DIRS.results, id)),
 				cwd: runnerCwd,
 				placeholder: "{previous}",
 				maxOutput,
@@ -2234,7 +2241,10 @@ export function executeAsyncSingle(
 			path.join(asyncDir, "status.json"),
 			launchParentSessionId,
 			(proof) => emitProcessTerminalEvent(ctx, proof),
-			(runnerProcessInstanceId) => params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId),
+			(runnerProcessInstanceId) => {
+				params.onRunnerStarted?.(runnerProcessInstanceId);
+				params.activeAsyncCapacity?.markStarted(runnerProcessInstanceId);
+			},
 			params.requestedCwd ?? runnerCwd,
 		);
 	} catch (error) {

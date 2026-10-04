@@ -1390,7 +1390,7 @@ function appendStepToAsyncChain(input: {
 	const chainSkillInput = normalizeSkillInput(input.params.skill);
 	const chainSkills = chainSkillInput === false ? [] : (chainSkillInput ?? []);
 	const parentModel = input.parentModel;
-	const asyncCtx = compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
+	const asyncCtx = compactOptional<Parameters<typeof executeAsyncChain>[1]["ctx"]>({
 		pi: input.deps.pi,
 		cwd: input.ctx.cwd,
 		currentSessionId: resolveCurrentSessionId(input.ctx.sessionManager),
@@ -2093,7 +2093,7 @@ async function resumeAsyncRun(input: {
 			},
 			agents,
 			unknownAgentDiagnosticContext,
-			ctx: compactOptional<Parameters<typeof executeAsyncSingle>[1]["ctx"]>({
+			ctx: compactOptional<Parameters<typeof executeAsyncChain>[1]["ctx"]>({
 				pi: input.deps.pi,
 				cwd: input.requestCwd,
 				currentSessionId: input.deps.state.currentSessionId,
