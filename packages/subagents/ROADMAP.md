@@ -26,11 +26,17 @@ The code-owned Claude Code, Codex and Cursor adapters and their read-only/writer
 
 Validation uses local CLI protocol fixtures through the real SDK, not vendor authentication or live models. No runner installation, login, fallback or permission bypass is added.
 
+## Phase 4a: terminal inspection and status
+
+Optional Herdr/Ghostty artifact viewers, standalone commands, process-local inspector registration and interactive-root Herdr metadata are enabled. Intent/identity retention prevents blind retries; Herdr close requires exact viewer-process evidence and confirmed pane absence. Ghostty requires an explicit source terminal and supports presence reporting, not automatic close. Controls remain session-owned and policy-bound. Closing a viewer never settles the child or frees admission. See [terminal inspectors](extensions/subagents/docs/terminal-inspectors.md).
+
+This increment deliberately separates observation from execution placement. The retained placement engines still need adaptation to explicit remote resources, writer admission and fail-closed remote settlement before their gates can be removed.
+
 ## Remaining phases
 
 | Phase | Scope |
 | --- | --- |
-| 4 | Herdr/Ghostty placement and terminal inspection/status integration |
+| 4b | Herdr project panes and native/CLI process placement |
 | 5 | Optional messaging, MCP, permission and provider integrations |
 | 6 | Missions, schedules, watchdog, host steps and advanced acceptance gates |
 

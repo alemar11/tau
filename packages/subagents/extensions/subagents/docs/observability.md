@@ -8,7 +8,7 @@ subagent({action:"status", id:"<run-id>"});
 subagent({action:"status", id:"<run-id>", view:"transcript", index:0});
 ```
 
-`/subagents` manages profiles. `/subagents-fleet` displays current-session children, progress, output and session paths. Its Enter/inspect action opens a bounded, read-only-in-effect view inside Pi: edits in the editor are discarded. There is no external terminal inspector or project-pane integration in phase 1. Headless callers use structured status/transcript results instead of the TUI.
+`/subagents` manages profiles. `/subagents-fleet` displays current-session children, progress, output and session paths. Its Enter/inspect action opens a bounded, read-only-in-effect view inside Pi: edits in the editor are discarded. Explicit [terminal inspector](terminal-inspectors.md) actions can separately open Herdr/Ghostty viewers; the fleet does not open external terminals automatically. Project panes and execution placement remain gated. Headless callers can use structured status/transcript results or a standalone inspector command.
 
 The fleet retains selection/scroll/detail controls, acknowledged steering and confirmed stop. `/subagents-stop <run-id>` and the corresponding tool action use the same authority checks. `/subagents-detach [run-id]` leaves an eligible foreground child running in the current process; it does not make it a daemon. `/subagents-doctor` reports configuration/runtime diagnostics.
 
@@ -34,6 +34,7 @@ async-subagent-runs/<run-id>/
   events.jsonl
   output-<index>.log
   subagent-log-<run-id>.md
+  inspectors/                 # optional retained viewer bindings/operation locks
 async-subagent-results/<run-id>.json
 writer-admission-v1/<scope-hash>/queue.json
 ```
@@ -42,7 +43,7 @@ Sessions, transcript/input/output/metadata artifacts and workflow `chain-runs` d
 
 After completion delivery, the one-shot result may be deleted. Version-1 completion replay and bounded output archives preserve correlated evidence for wait/recovery. An archive may point to an existing output/session file or contain a truncated result tail (at most 64 KiB per child). `bg_wait` includes slim completion identities/references rather than duplicating full output. This is retention-bounded recovery, not a universal exactly-once guarantee.
 
-Default async retention is 30 days with a 24-hour tombstone grace; normal artifacts default to 7 days. Retention does not free writer ownership. Inspect incomplete/uncertain runs before explicit resume or replay. A new session does not silently take ownership of another session's run.
+Default async retention is 30 days with a 24-hour tombstone grace; normal artifacts default to 7 days. Retention does not free writer ownership. Retained inspector bindings or operation locks block async-run reclamation until reconciled. Inspect incomplete/uncertain runs before explicit resume or replay. A new session does not silently take ownership of another session's run.
 
 ## RPC and events
 
@@ -52,4 +53,4 @@ Core event names include `subagent:async-started`, `subagent:async-complete`, `s
 
 `launchResolvedExtensions` describes launch intent, not successful tool registration. `runtimeAcknowledgedExtensions` is a bounded, self-declared acknowledgement from cooperating extensions, not proof of health. Tau Web additionally has an actual loader/provenance check before prompting. `pi.events` is process-local; native supervisor and runner coordination use their own correlated, owned filesystem protocols.
 
-No result/session upload, external terminal observer, or optional message bridge is activated by this core.
+No result/session upload or optional message bridge is activated. Terminal inspectors are explicit opt-ins; interactive roots inside Herdr can publish temporary display metadata. Neither an inspector nor that metadata confers execution or settlement authority.

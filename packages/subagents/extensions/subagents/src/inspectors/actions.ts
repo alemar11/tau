@@ -69,10 +69,11 @@ function resolveTarget(params: InspectorParams, deps: InspectorDispatcherDeps): 
 			return { error: cause instanceof Error ? cause.message : String(cause) };
 		}
 	}
+	if (!trustedDir(asyncDir, deps)) return { error: `Async run directory '${asyncDir}' is outside trusted run roots.` };
 	const status = readStatus(asyncDir);
-	if (!status) return { error: `No lifecycle status exists for async run '${runId}'.` };
-	if (params.index !== undefined && (params.index < 0 || params.index >= (status.steps?.length ?? 0))) return { error: `Async run '${runId}' has ${status.steps?.length ?? 0} children. Index ${params.index} is out of range.` };
-	const target: InspectorTarget = { runId, asyncDir, status: { cwd: status.cwd, state: status.state, steps: status.steps } };
+	if (!status || status.runId !== runId) return { error: `No matching lifecycle status exists for async run '${runId}'.` };
+	if (params.index !== undefined && (!Number.isInteger(params.index) || params.index < 0 || params.index >= (status.steps?.length ?? 0))) return { error: `Async run '${runId}' has ${status.steps?.length ?? 0} children. Index ${params.index} is out of range.` };
+	const target: InspectorTarget = { runId, asyncDir, status: { cwd: status.cwd, state: status.state, steps: status.steps, sessionId: status.sessionId } };
 	if (params.index !== undefined) target.index = params.index;
 	return target;
 }
@@ -92,9 +93,14 @@ function launchFor(target: InspectorTarget, deps: InspectorDispatcherDeps): Insp
 	const runnerPath = deps.runnerPath ?? fileURLToPath(new URL("../../inspector-runner.mjs", import.meta.url));
 	const job = deps.state?.asyncJobs.get(target.runId) ?? deps.state?.fleetJobs?.get(target.runId);
 	const sessionRoots = [...new Set([...(deps.sessionRoots ?? deps.state?.trustedSessionRoots ?? []), ...(job?.sessionRoot ? [job.sessionRoot] : [])])];
-	const allowSteer = resolveAuthorityDecision({ action: "steerRun", policy: deps.authorityPolicy }) === "auto";
-	const allowStop = resolveAuthorityDecision({ action: "stopRun", policy: deps.authorityPolicy }) === "auto";
+	const ownerSessionId = deps.state?.currentSessionId;
+	const ownsRun = Boolean(ownerSessionId && ownerSessionId === target.status.sessionId);
+	const selectedSteps = target.index === undefined ? target.status.steps : [target.status.steps?.[target.index]];
+	const nativeSteering = Boolean(selectedSteps?.length && selectedSteps.every((step) => step && step.runner === undefined));
+	const allowSteer = ownsRun && nativeSteering && resolveAuthorityDecision({ action: "steerRun", policy: deps.authorityPolicy }) === "auto";
+	const allowStop = ownsRun && resolveAuthorityDecision({ action: "stopRun", policy: deps.authorityPolicy }) === "auto";
 	const argv = [runnerPath, "--async-dir", target.asyncDir, "--run-id", target.runId, "--allow-steer", String(allowSteer), "--allow-stop", String(allowStop), "--session-roots", encodeSessionRoots(sessionRoots)];
+	if (ownsRun && ownerSessionId) argv.push("--owner-session-id", ownerSessionId);
 	if (target.index !== undefined) argv.push("--index", String(target.index));
 	if (mission) argv.push("--mission-path", mission.path);
 	const executable = resolveNodeExecutable();
@@ -118,24 +124,28 @@ export interface InspectorDispatcherDeps {
 	plugins?: readonly InspectorPlugin[];
 }
 export async function handleInspectorAction(action: InspectorAction, params: InspectorParams, deps: InspectorDispatcherDeps): Promise<AgentToolResult<Details>> {
+	if (deps.signal?.aborted) return result("Inspector action aborted before dispatch.", true);
 	const target = resolveTarget(params, deps);
 	if ("error" in target) return result(target.error, true);
 	const context: InspectorContext = {
 		cwd: deps.cwd,
 		signal: deps.signal,
-		env: deps.env ?? process.env,
+		env: { ...(deps.env ?? process.env) },
 		target,
 	};
 	if (deps.now) context.now = deps.now;
 	if (action === "inspector.command") return result(launchFor(target, deps).displayCommand);
 	const plugins = deps.plugins ?? [];
+	const owners = plugins.filter((plugin) => plugin.owns(context));
+	if (owners.length > 1) return result("Multiple inspector bindings exist; reconcile them before operating on a terminal.", true);
+	const owner = owners[0];
 	if (action === "inspector.open") {
+		if (owner) return owner.open(context, launchFor(target, deps), params);
 		for (const plugin of plugins) {
 			if (await plugin.available(context)) return plugin.open(context, launchFor(target, deps), params);
 		}
 		return result("No inspector plugin is available. Start a supported inspector host, or use inspector.command for a standalone command.", true);
 	}
-	const owner = plugins.find((plugin) => plugin.owns(context));
 	if (!owner) return result(`No inspector plugin owns this binding for async run ${target.runId}.`);
 	if (action === "inspector.status") {
 		return owner.status

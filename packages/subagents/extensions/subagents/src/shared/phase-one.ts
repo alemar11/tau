@@ -5,7 +5,7 @@ import type { AgentConfig } from "../agents/agents.ts";
 import { isCodeOwnedExternalCliAdapterId } from "../runs/shared/external-cli-contract.ts";
 import type { TrackedMutationSnapshot, ExtensionConfig } from "./types.ts";
 
-export const PHASE_ONE_DISABLED = ["watchdog", "panes", "missions", "preflight", "gates", "external-machines", "extension-bindings"] as const;
+export const PHASE_ONE_DISABLED = ["watchdog", "project-panes", "missions", "preflight", "gates", "external-machines", "extension-bindings"] as const;
 export function phaseOneConfig(config: ExtensionConfig): ExtensionConfig {
 	if (config.worktreeProvider !== undefined && config.worktreeProvider !== "native") throw new Error("Only the native Git worktree provider is supported; other allocators are excluded.");
 	for (const key of ["worktreeSetupHook", "worktreeSetupHookTimeoutMs", "intercomBridge"] as const) {

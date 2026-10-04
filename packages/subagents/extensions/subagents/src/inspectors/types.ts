@@ -1,5 +1,5 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { Details } from "../shared/types.ts";
+import type { AsyncStatus, Details } from "../shared/types.ts";
 
 export const INSPECTOR_ACTIONS = ["inspector.open", "inspector.command", "inspector.status", "inspector.close"] as const;
 export type InspectorAction = typeof INSPECTOR_ACTIONS[number];
@@ -17,9 +17,10 @@ export interface InspectorTarget {
 	asyncDir: string;
 	index?: number;
 	status: {
+		sessionId?: string;
 		cwd?: string;
 		state: string;
-		steps?: unknown[];
+		steps?: AsyncStatus["steps"];
 	};
 }
 

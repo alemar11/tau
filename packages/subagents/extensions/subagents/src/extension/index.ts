@@ -55,7 +55,9 @@ import {
 	SUPERVISOR_REQUEST_MESSAGE_TYPE,
 	type SupervisorRequestMessageDetails,
 } from "../intercom/supervisor-ui.ts";
-import type { HerdrStatusRun } from "../integrations/herdr-status.ts";
+import { registerHerdrStatusBridge, type HerdrStatusRun } from "../integrations/herdr-status.ts";
+import { registerInspectorEventListener } from "../inspectors/plugins.ts";
+import { createHerdrClient } from "../inspectors/herdr/client.ts";
 import { createRetainedNestedRouteTracker } from "../runs/background/retained-nested-route-tracker.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
@@ -783,6 +785,17 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		workflowScriptsDisabled: disabledFeatures.features.has("workflow-scripts"),
 	});
 
+	const terminalEnv = disabledFeatures.features.has("panes") ? {} : { ...process.env };
+	const herdrClient = createHerdrClient({ env: terminalEnv, bin: process.env.HERDR_BIN ?? "herdr" });
+	const herdrStatusBridge = registerHerdrStatusBridge({
+		events: pi.events,
+		env: terminalEnv,
+		getRuns: () => projectActiveHerdrRuns(state),
+		async runHerdr(args) {
+			const result = await herdrClient.run([...args], { timeoutMs: 5_000 });
+			if (!result.ok) throw new Error(result.error.message);
+		},
+	});
 	let visibleControlNotices = new Set<string>();
 	const controlEventHandler = (payload: unknown) => {
 		handleSubagentControlNotice({
@@ -810,6 +823,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	};
 	const eventUnsubscribes = [
 		registerRuntimeAgentEventListener(pi),
+		...(disabledFeatures.features.has("panes") ? [] : [registerInspectorEventListener(pi)]),
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, () => {
@@ -819,6 +833,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
 		rpcBridge.dispose,
+		herdrStatusBridge.dispose,
 	];
 
 	pi.on("tool_result", (event, ctx) => {
@@ -826,6 +841,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		if (!ctx.hasUI) return;
 		state.lastUiContext = ctx;
 		restoreActiveJobs(ctx);
+		herdrStatusBridge.syncRuns();
 		fleetStatus?.setContext(ctx);
 		fleetStatus?.refresh();
 		if (state.asyncJobs.size > 0) {
@@ -1036,6 +1052,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 	pi.on("agent_start", () => {
 		resumeWidgetsAfterCompaction();
+		herdrStatusBridge.agentStarted();
 	});
 
 	pi.on("agent_settled", () => {
@@ -1069,6 +1086,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		releaseHostSessionLiveness();
 		retainedNestedRouteTracker = createRetainedNestedRouteTracker(state);
 		executorDeps.trackRetainedNestedRoute = retainedNestedRouteTracker.track;
+		herdrStatusBridge.sessionStarted({ hasUI: ctx.hasUI === true && !process.env[SUBAGENT_CHILD_ENV], runs: projectActiveHerdrRuns(state) });
 		rpcBridge.emitReady(ctx);
 		supervisorChannel.start();
 		supervisorChannel.activateTransport();
@@ -1081,6 +1099,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		} catch (error) {
 			console.error("Failed to dispose in-process child sessions:", error);
 		}
+		await herdrStatusBridge.flush();
 	});
 
 	pi.on("session_start", (_event, ctx) => beginAdvertisement(ctx));

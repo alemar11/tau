@@ -300,6 +300,15 @@ function hasUnresolvedRunHandoff(runDir: string, status: AsyncStatus): boolean {
 	return [...paths].some(unresolvedHandoff);
 }
 
+function hasInspectorReferences(runDir: string): boolean {
+	const directory = path.join(runDir, "inspectors");
+	try {
+		const stat = fs.lstatSync(directory);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) return true;
+		return fs.readdirSync(directory).length > 0;
+	} catch (error) { return !isNotFound(error); }
+}
+
 function runSkipReason(input: {
 	runDir: string;
 	status: AsyncStatus | undefined;
@@ -323,6 +332,7 @@ function runSkipReason(input: {
 	if (hasNestedReferences(status)) return "nested-reference";
 	if (missionReferenceBlocksReclaim(runDir, input.resultsDir, status.runId)) return "mission-reference";
 	if (hasUnresolvedRunHandoff(runDir, status)) return "handoff-reference";
+	if (hasInspectorReferences(runDir)) return "inspector-reference";
 	if (hasResumableContract(runDir, status)) return "resumable";
 	const timestamp = statusTimestamp(status, runDir);
 	if (timestamp === undefined) return "unknown-age";

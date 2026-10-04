@@ -1,7 +1,8 @@
-import { openGhosttyInspector, type GhosttyRunner } from "./actions.ts";
+import { ghosttyBindingPath, openGhosttyInspector, statusGhosttyInspector, type GhosttyRunner } from "./actions.ts";
+import { bindingExists } from "../binding-store.ts";
 import type { InspectorPlugin } from "../types.ts";
 
-/** 独立 Ghostty.app 的 bundle id (作者 Mitchell Hashimoto)。 */
+/** Only the standalone app owns this AppleScript API. */
 const GHOSTTY_BUNDLE_ID = "com.mitchellh.ghostty";
 
 export interface GhosttyPluginDeps {
@@ -14,16 +15,13 @@ export function createGhosttyInspectorPlugin(deps: GhosttyPluginDeps = {}): Insp
 	return {
 		name: "ghostty",
 		available: (context) => {
-			// cmux 内嵌 Ghostty 内核, 也会把 TERM_PROGRAM 设成 "ghostty"。仅凭环境变量会让 plugin
-			// 在 cmux 下误接管, 随后 osascript 连不上真正的 Ghostty 应用而抛 -1728/-2741。
+			// Embedded Ghostty hosts do not confer authority over the standalone app.
 			if (platform !== "darwin") return false;
 			if (context.env.TERM_PROGRAM?.toLowerCase() !== "ghostty") return false;
-			// macOS GUI 应用启动子进程时注入 __CFBundleIdentifier, 标识当前终端宿主 app。
-			// cmux 的 bundle id 是 com.cmuxterm.app, 而非 Ghostty; 即便系统同时装了独立 Ghostty,
-			// 也能据此判定当前终端不是 Ghostty, 避免误连独立 Ghostty 的窗口。
 			return context.env.__CFBundleIdentifier?.trim() === GHOSTTY_BUNDLE_ID;
 		},
-		owns: () => false,
+		owns: (context) => bindingExists(ghosttyBindingPath(context)),
 		open: (context, launch, params) => openGhosttyInspector(context, launch, params, deps.runner),
+		status: (context) => statusGhosttyInspector(context, deps.runner),
 	};
 }

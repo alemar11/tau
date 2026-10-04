@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { parseMissionRecord } from "../missions/store.ts";
 import type { MissionRecord } from "../missions/types.ts";
 import { requestAsyncSteer, requestAsyncStop } from "../runs/background/control-channel.ts";
@@ -19,6 +20,7 @@ export interface RunnerOptions {
 	refreshMs: number;
 	allowSteer?: boolean;
 	allowStop?: boolean;
+	ownerSessionId?: string;
 	sessionRoots: string[];
 }
 
@@ -42,9 +44,13 @@ export function formatInspectorDashboard(input: { status: AsyncStatus; asyncDir:
 	}
 	lines.push(formatAsyncRunTranscript(status, asyncDir, { index: input.index, lines: 60, sessionRoots: input.sessionRoots }));
 	const acceptsPlainGuidance = input.index !== undefined || status.mode === "single";
-	const controls = [input.allowSteer === false || !acceptsPlainGuidance ? undefined : "type guidance", input.allowSteer === false ? undefined : "steer <message>", input.allowStop === false ? undefined : "stop", "status"].filter(Boolean);
-	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent_supervisor/intercom); this inspector is read-only.");
-	return lines.join("\n");
+	const controls = [input.allowSteer !== true || !acceptsPlainGuidance ? undefined : "type guidance", input.allowSteer !== true ? undefined : "steer <message>", input.allowStop !== true ? undefined : "stop", "status"].filter(Boolean);
+	lines.push("", `Controls: ${controls.join(" | ")}`, "Supervisor replies remain in the parent Pi session (subagent_supervisor). Controls require explicit authority and matching session ownership.");
+	return sanitizeInspectorText(lines.join("\n"));
+}
+
+function sanitizeInspectorText(text: string): string {
+	return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, "");
 }
 
 function parseArgs(argv: string[]): RunnerOptions {
@@ -73,8 +79,9 @@ function parseArgs(argv: string[]): RunnerOptions {
 		...(values.get("--mission-path") ? { missionPath: path.resolve(values.get("--mission-path")!) } : {}),
 		sessionRoots,
 		refreshMs,
-		allowSteer: values.get("--allow-steer") !== "false",
-		allowStop: values.get("--allow-stop") !== "false",
+		allowSteer: values.get("--allow-steer") === "true",
+		allowStop: values.get("--allow-stop") === "true",
+		ownerSessionId: values.get("--owner-session-id"),
 	};
 }
 
@@ -83,11 +90,14 @@ function isTerminal(status: AsyncStatus): boolean {
 }
 
 function queueInspectorSteer(options: RunnerOptions, status: AsyncStatus, message: string): string {
-	if (options.allowSteer === false) throw new Error("Authority policy does not allow steer from this inspector.");
+	if (options.allowSteer !== true) throw new Error("Authority policy does not allow steer from this inspector.");
 	if (isTerminal(status)) throw new Error(`Run '${options.runId}' is ${status.state} and cannot be steered.`);
 	const runningIndexes = (status.steps ?? []).map((step, index) => step.status === "running" ? index : undefined).filter((index): index is number => index !== undefined);
 	const targetIndex = options.index ?? (status.mode === "single" ? 0 : undefined);
 	if (targetIndex === undefined && runningIndexes.length === 0) throw new Error("No running child is available to steer. Open a child-specific inspector for a pending child.");
+	const targets = targetIndex === undefined ? runningIndexes : [targetIndex];
+	if (targets.some((index) => !status.steps?.[index] || status.steps[index]!.runner !== undefined)) throw new Error("External or unknown runners do not support live inspector steering.");
+	if (targets.some((index) => !["pending", "queued", "running"].includes(status.steps![index]!.status))) throw new Error("Inspector steering requires an active or pending child.");
 	requestAsyncSteer(options.asyncDir, {
 		message,
 		...(targetIndex !== undefined ? { targetIndex } : { targetIndexes: runningIndexes }),
@@ -101,11 +111,13 @@ export function submitInspectorControl(options: RunnerOptions, line: string): st
 	if (!command || command === "status") return "Status refreshed.";
 	const status = readStatus(options.asyncDir);
 	if (!status || status.runId !== options.runId) throw new Error(`Lifecycle status for run '${options.runId}' is unavailable.`);
+	if (!options.ownerSessionId || status.sessionId !== options.ownerSessionId) throw new Error("Inspector controls require matching parent session ownership.");
 	if (command === "stop") {
-		if (options.allowStop === false) throw new Error("Authority policy does not allow stop from this inspector.");
+		if (options.allowStop !== true) throw new Error("Authority policy does not allow stop from this inspector.");
 		if (isTerminal(status)) throw new Error(`Run '${options.runId}' is ${status.state} and cannot be stopped.`);
-		requestAsyncStop(options.asyncDir, { source: "inspector-runner" });
-		return `Stop requested for run ${options.runId}.`;
+		if (options.index !== undefined && (!Number.isInteger(options.index) || options.index < 0 || !status.steps?.[options.index])) throw new Error("Inspector stop target is unavailable.");
+		requestAsyncStop(options.asyncDir, { source: "inspector-runner", ...(options.index === undefined ? {} : { targetIndex: options.index }) });
+		return `Stop requested for run ${options.runId}${options.index === undefined ? "" : ` child ${options.index}`}.`;
 	}
 	if (command.startsWith("steer ")) {
 		const message = command.slice("steer ".length).trim();
@@ -124,10 +136,10 @@ export function runInspector(argv = process.argv.slice(2)): void {
 	const render = () => {
 		const status = readStatus(options.asyncDir);
 		if (!status || status.runId !== options.runId) {
-			process.stdout.write(`\x1b[2J\x1b[Htau-subagents inspector\n\nLifecycle status for ${options.runId} is unavailable.\n`);
+			process.stdout.write(`\x1b[2J\x1b[Htau-subagents inspector\n\nLifecycle status for ${sanitizeInspectorText(options.runId)} is unavailable.\n`);
 			return;
 		}
-		process.stdout.write(`\x1b[2J\x1b[H${formatInspectorDashboard({ status, asyncDir: options.asyncDir, index: options.index, mission: readMission(options.missionPath), allowSteer: options.allowSteer, allowStop: options.allowStop, sessionRoots: options.sessionRoots })}${notice ? `\n\n${notice}` : ""}\n> `);
+		process.stdout.write(`\x1b[2J\x1b[H${formatInspectorDashboard({ status, asyncDir: options.asyncDir, index: options.index, mission: readMission(options.missionPath), allowSteer: options.allowSteer, allowStop: options.allowStop, sessionRoots: options.sessionRoots })}${notice ? `\n\n${sanitizeInspectorText(notice)}` : ""}\n> `);
 		if (isTerminal(status) && timer) {
 			clearInterval(timer);
 			timer = undefined;

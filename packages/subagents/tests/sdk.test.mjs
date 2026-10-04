@@ -20,7 +20,8 @@ test("standalone package loads on the real Pi SDK without external integrations"
   const extension = loaded.extensions.find((entry) => entry.tools.has("subagent"));
   assert.ok(extension, "subagent registered");
   const schema = JSON.stringify(extension.tools.get("subagent").definition.parameters);
-  assert.doesNotMatch(schema, /mission\.create|schedule\.create|inspector\.open/);
+  assert.doesNotMatch(schema, /mission\.create|schedule\.create|project\.open/);
+  assert.match(schema, /inspector\.open/);
   assert.match(schema, /worktree\.cleanup/);
   assert.match(schema, /lane\.recordMerge/);
   const profiles = join(dir, "tau-subagents", "agents"); mkdirSync(profiles, { recursive: true });

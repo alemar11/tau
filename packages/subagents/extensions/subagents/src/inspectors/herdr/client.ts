@@ -40,15 +40,17 @@ function normalizeCode(raw: unknown): HerdrErrorCode {
 	return "VALIDATION_ERROR";
 }
 
-export function createHerdrClient(options: { bin?: string; spawn?: SpawnHerdr } = {}): HerdrClient {
-	const bin = options.bin ?? process.env.HERDR_BIN ?? "herdr";
+export function createHerdrClient(options: { bin?: string; spawn?: SpawnHerdr; env?: NodeJS.ProcessEnv } = {}): HerdrClient {
+	const env = { ...(options.env ?? process.env) };
+	const bin = options.bin ?? env.HERDR_BIN ?? "herdr";
 	const spawnImpl = options.spawn ?? spawn;
 	return {
 		run<T>(args: string[], runOptions: { timeoutMs?: number; signal?: AbortSignal; textOk?: boolean } = {}): Promise<HerdrResult<T>> {
+			if (runOptions.signal?.aborted) return Promise.resolve(error("TIMEOUT", "Herdr command aborted before launch."));
 			return new Promise((resolve) => {
 				let child: ReturnType<typeof spawn>;
 				try {
-					child = spawnImpl(bin, args, { shell: false, windowsHide: true, env: process.env });
+					child = spawnImpl(bin, args, { shell: false, windowsHide: true, env });
 				} catch (cause) {
 					const code = (cause as NodeJS.ErrnoException | undefined)?.code;
 					resolve(error("HERDR_UNAVAILABLE", code === "ENOENT"
@@ -77,8 +79,18 @@ export function createHerdrClient(options: { bin?: string; spawn?: SpawnHerdr } 
 				timer.unref?.();
 				if (runOptions.signal?.aborted) abort();
 				else runOptions.signal?.addEventListener("abort", abort, { once: true });
-				child.stdout?.on("data", (chunk) => { stdout += chunk.toString(); });
-				child.stderr?.on("data", (chunk) => { stderr += chunk.toString(); });
+				let outputBytes = 0;
+				const collect = (chunk: Buffer, stream: "stdout" | "stderr") => {
+					if (settled) return;
+					outputBytes += Buffer.byteLength(chunk);
+					if (outputBytes > 512 * 1024) {
+						try { child.kill("SIGKILL"); } catch {}
+						finish(error("VALIDATION_ERROR", "Herdr output exceeded 512 KiB; reconcile any possible terminal effects before retrying."));
+					} else if (stream === "stdout") stdout += chunk.toString();
+					else stderr += chunk.toString();
+				};
+				child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "stdout"));
+				child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "stderr"));
 				child.on("error", (cause) => {
 					const code = (cause as NodeJS.ErrnoException).code;
 					finish(error("HERDR_UNAVAILABLE", code === "ENOENT"

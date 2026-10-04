@@ -38,6 +38,10 @@ Use `action:"status"` with `id`, optionally `view:"transcript"` and bounded `lin
 
 `contact_supervisor` is child-to-immediate-parent communication. The parent uses `subagent_supervisor` with `action:"pending"` or `action:"reply",replyTo,message`. Wrong-owner, duplicate and stale replies cannot answer another question.
 
+## Terminal inspectors
+
+`inspector.command` returns a standalone Node viewer command. `inspector.open` and `inspector.status` optionally use Herdr or standalone Ghostty for an existing background run; supply `id` (or a trusted `dir`), optional child `index`, and `focus` on open. Herdr `inspector.close` requires verified viewer ownership. Ghostty close remains manual. Closing a viewer never stops the child or releases admission. See [terminal inspectors](terminal-inspectors.md) for explicit source identity, permissions and retained uncertain effects.
+
 ## Workflows
 
 `workflow:true` selects the single fenced `js workflow` block in the same assistant reply. A workflow string containing `/` is a file path; other strings name workflow resources. `action:"validate"` validates without launching children. See [workflows](workflows.md).
@@ -52,4 +56,4 @@ Use `output` to bind a report; `outputMode:"file-only"` requires a path. `output
 
 ## Pi UI
 
-`/subagents` opens the manager; `/subagents-fleet` shows live children. `/subagents-stop`, `/subagents-steer`, `/subagents-detach`, `/subagent-cost`, `/subagents-guide` and `/run` use the same runtime. Inspection stays in Pi; headless status/control do not require TUI. No external terminal is opened.
+`/subagents` opens the manager; `/subagents-fleet` shows live children. `/subagents-stop`, `/subagents-steer`, `/subagents-detach`, `/subagent-cost`, `/subagents-guide` and `/run` use the same runtime. Fleet inspection stays in Pi; headless status/control do not require TUI. Only explicit inspector actions open external viewers.

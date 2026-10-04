@@ -6773,7 +6773,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					state: deps.state,
 					cwd: requestCwd,
 					...(deps.config.missions ? { missions: deps.config.missions } : {}),
-					...(deps.config.authorityPolicy ? { authorityPolicy: deps.config.authorityPolicy } : {}),
+					authorityPolicy: deps.allowMutatingManagementActions === false
+						? { ...deps.config.authorityPolicy, steerRun: "forbid", stopRun: "forbid" }
+						: deps.config.authorityPolicy,
 					plugins: getInspectorPlugins(deps.pi),
 					signal,
 				});

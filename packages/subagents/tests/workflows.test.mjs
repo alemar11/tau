@@ -76,8 +76,10 @@ test("workflow output budgets fail before flooding the host and keep partial evi
 
 test("phase-one gates apply even without user config and keep neutral internal fields valid", () => {
   const surface = resolveDisabledFeatureSurface({});
-  for (const request of [{ action: "mission.create" }, { action: "schedule.run" }, { action: "inspector.open" }, { acceptance: { verify: ["true"] } }, { machine: "remote" }]) assert.ok(disabledFeatureUseError(request, surface));
+  for (const request of [{ action: "mission.create" }, { action: "schedule.run" }, { action: "project.open" }, { acceptance: { verify: ["true"] } }, { machine: "remote" }]) assert.ok(disabledFeatureUseError(request, surface));
   assert.equal(disabledFeatureUseError({ agent: "worker", task: "work", mission: false, acceptance: false }, surface), undefined);
+  assert.equal(disabledFeatureUseError({ action: "inspector.open", focus: false }, surface), undefined);
+  assert.ok(disabledFeatureUseError({ action: "inspector.open" }, resolveDisabledFeatureSurface({ disabledFeatures: ["panes"] })));
   for (const options of [{ share: true }, { shareEnabled: true }]) assert.throws(() => assertNativeExecution(options), /excluded/);
   assert.throws(() => assertNativeExecution({ machine: "remote" }), /phase 1/);
   for (const agent of [{ runner: { type: "codex" } }, { permissions: {} }, { tools: ["mcp:server"] }]) assert.throws(() => assertNativeAgent({ name: "deferred", ...agent }), /phase 1/);

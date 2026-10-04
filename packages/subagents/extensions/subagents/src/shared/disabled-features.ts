@@ -20,6 +20,10 @@ export const SUBAGENT_FEATURES = {
 		actions: ["inspector.open", "inspector.command", "inspector.status", "inspector.close", "project.open", "project.status", "project.close"],
 		params: ["focus"],
 	},
+	"project-panes": {
+		actions: ["project.open", "project.status", "project.close"],
+		params: [],
+	},
 	missions: {
 		actions: ["mission.create", "mission.list", "mission.show", "mission.update", "mission.resolve-decision", "mission.attach-run", "mission.close"],
 		params: ["mission", "missionUpdate", "missionStatus", "missionScope", "missionId", "runMode", "runStatus", "summary"],

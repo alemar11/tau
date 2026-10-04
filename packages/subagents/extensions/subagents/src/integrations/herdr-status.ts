@@ -138,7 +138,7 @@ function attentionNotice(data: unknown): { runId: string; label: string } | unde
 export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): HerdrStatusBridge {
 	const env = options.env ?? process.env;
 	const paneId = env.HERDR_PANE_ID;
-	const enabled = env.HERDR_ENV === "1" && typeof paneId === "string" && paneId.length > 0;
+	const enabled = env.HERDR_ENV === "1" && typeof paneId === "string" && /^[a-zA-Z0-9][a-zA-Z0-9:._-]{0,127}$/.test(paneId);
 	const runHerdr = options.runHerdr;
 	const ttlMs = options.ttlMs ?? DEFAULT_TTL_MS;
 	const refreshMs = options.refreshMs ?? DEFAULT_REFRESH_MS;
@@ -390,7 +390,13 @@ export function registerHerdrStatusBridge(options: HerdrStatusBridgeOptions): He
 			clearAttention();
 		},
 		sessionStarted({ hasUI, runs: restoredRuns }) {
-			if (!enabled || disposed || hasUI !== true) return;
+			if (!enabled || disposed) return;
+			acknowledgedAttention.clear();
+			if (hasUI !== true) {
+				if (rootSession) replaceRuns([]);
+				rootSession = false;
+				return;
+			}
 			rootSession = true;
 			replaceRuns(restoredRuns);
 		},

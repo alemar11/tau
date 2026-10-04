@@ -193,7 +193,7 @@ const SubagentParamProperties = {
 	additional: Type.Optional(Type.Integer({ minimum: 1, description: "grant-spawn-budget: root interactive parent + native user confirmation only; total grants capped at original configured cap." })),
 	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "watchdog.configure scope; default session, persistent only if explicit." })),
 	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Watchdog target." })),
-	focus: Type.Optional(Type.Boolean({ description: "Focus inspector.open/project.open pane." })),
+	focus: Type.Optional(Type.Boolean({ description: "Focus the inspector.open viewer." })),
 	thinking: Type.Optional(Type.Unsafe({ anyOf: [{ type: "string" }, { type: "boolean" }], description: "watchdog.configure only: off/minimal/low/medium/high/xhigh/max, inherit, false=off; true invalid. Dispatch ignores this; use model suffix." })),
 	at: Type.Optional(Type.String({ description: "schedule.create: delay (+10m) or zoned ISO timestamp." })),
 	every: Type.Optional(Type.String({ description: "schedule.create interval, e.g. 30m/6h/2d/2w." })),

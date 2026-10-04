@@ -12,7 +12,7 @@ pi -e ./packages/subagents
 pi install /path/to/tau/packages/subagents
 ```
 
-The Tau root bundle also includes it; install the bundle **or** individual packages, not both. The local `web` dependency belongs to Tau. No external runner, Git executable or terminal manager is required for ordinary native delegation. Git is required only when opting into worktree isolation. Configuration and state use Tau-owned namespaces.
+The npm-workspaces root is tooling-only; load or install individual packages, not the root. The local `web` dependency belongs to Tau. No external runner, Git executable or terminal manager is required for ordinary native delegation. Git is required only when opting into worktree isolation. Configuration and state use Tau-owned namespaces.
 
 ## Use
 
@@ -29,6 +29,7 @@ Custom profiles: `$PI_CODING_AGENT_DIR/tau-subagents/agents/` (default `~/.pi/ag
 
 - [Profiles and Tau Web](extensions/subagents/docs/agents.md)
 - [Optional Claude Code, Codex and Cursor runners](extensions/subagents/docs/external-runners.md)
+- [Herdr/Ghostty terminal inspectors](extensions/subagents/docs/terminal-inspectors.md)
 - [Workflow API and dependency barriers](extensions/subagents/docs/workflows.md)
 - [Native Git worktrees and explicit cleanup](extensions/subagents/docs/worktrees.md)
 - [Controls, supervisor replies, output and Pi UI](extensions/subagents/docs/tool-reference.md)
@@ -41,6 +42,10 @@ Custom profiles: `$PI_CODING_AGENT_DIR/tau-subagents/agents/` (default `~/.pi/ag
 Six opt-in profiles support installed Claude Code, Codex and Cursor CLIs: `claude-code`, `codex-exec`, `cursor-agent`, and their explicit `-writer` variants. They are background-only, one-shot executions with bounded preflight/parsing, terminal stop and explicit non-resumable receipts. Native fork, steering, structured output and supervisor transports are not available. No CLI is installed, authenticated or selected as a fallback automatically. See the runner guide for access flags and operator-trust requirements.
 
 All local CLI profiles use writer admission, including their preflight processes. Probe/execution group closure and output finalization must be observed; uncertain processes retain ownership and private prompt files. Native worktree retention and mutation evidence also apply.
+
+## Optional terminal inspectors
+
+`inspector.command` returns a standalone artifact viewer command. Explicit `inspector.open`/`status` actions support Herdr and standalone macOS Ghostty; Herdr also supports verified viewer closure and root-session metadata. Terminal identity and uncertain effects are retained. Ghostty requires an explicitly selected terminal ID and manual close. Closing a viewer never stops a child or releases its writer lease. See the inspector guide for authority, ownership and host prerequisites.
 
 ## Writer admission and recovery
 
@@ -56,7 +61,7 @@ Default limits: depth 2, 64 spawns per run, workflow concurrency 20, single-chil
 
 Phase two enables native Git worktrees, tracked mutation evidence, workflow lanes and handoff management. Use `worktree:true` (or `isolation:"worktree"`), optionally `baseRef`. Distinct worktrees allow concurrent writers; the same cwd still uses FIFO admission. Worktrees and branches are **retained by default**, including after cancellation. `worktree.cleanup` creates a read-only plan; `worktree.discard` requires explicit authorization and verified settlement/ownership. Merge and supersession actions record evidence, never execute a merge. See the worktree guide for safety and shared-resource limits.
 
-Worktrunk and session sharing through GitHub Gist are explicitly excluded; `gh` is not a Subagents runtime requirement. Terminal managers, optional integrations, missions/schedules/watchdog and advanced gates remain tracked for subsequent increments. Their public launch options/actions are rejected. Deferred source is not advertised as an installed capability. Advanced package subpath APIs and council/prompt resources still require their own increments; see `ROADMAP.md`.
+Worktrunk and session sharing through GitHub Gist are explicitly excluded; `gh` is not a Subagents runtime requirement. Project panes, Herdr process placement, optional messaging/MCP/provider integrations, missions/schedules/watchdog and advanced gates remain tracked for subsequent increments. Their public launch options/actions are rejected. Deferred source is not advertised as an installed capability. Advanced package subpath APIs and council/prompt resources still require their own increments; see `ROADMAP.md`.
 
 ## Validation
 
