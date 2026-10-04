@@ -32,6 +32,14 @@ Optional Herdr/Ghostty artifact viewers, standalone commands, process-local insp
 
 This increment deliberately separates observation from execution placement. The retained placement engines still need adaptation to explicit remote resources, writer admission and fail-closed remote settlement before their gates can be removed.
 
+### Phase 4b preparation: retained placement ownership
+
+The private placement engine now journals intent before remote runtime allocation, pane creation and agent startup, and retains returned identities before further operations. Journals are append-only, bounded and synced; uncertain writes and replaced directories block further effects. Allocation requires an explicitly selected workspace, never a cwd/label inference or fallback workspace, and serializes its twenty-pane cap in the original local storage namespace. Crashed or failed allocation locks are not reclaimed by age or PID.
+
+Cleanup releases local transports only. Remote panes, processes, runtime directories and journals remain retained after success, failure, cancellation and disconnect. Neither Herdr `idle`/`done` nor quiet terminal output proves writer settlement; the private remote CLI projection no longer advertises verified stop. Local native/CLI stop support is unchanged.
+
+This is a tested ownership foundation, **not enabled placement**. Public project panes, saved-machine configuration/wiring, explicit remote resource loading, deadline-bound remote writer admission and authoritative process-settlement evidence remain required. No live SSH placement or terminal mutation was exercised; local allocation locks do not coordinate other hosts or manual Herdr operations.
+
 ## Remaining phases
 
 | Phase | Scope |

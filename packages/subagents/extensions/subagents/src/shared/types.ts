@@ -1787,6 +1787,8 @@ export interface HerdrMachineReference {
 	label?: string;
 	target: string;
 	session?: string;
+	/** Explicit operator-selected remote workspace; cwd/labels never select one implicitly. */
+	workspaceId?: string;
 	cwd: string;
 }
 

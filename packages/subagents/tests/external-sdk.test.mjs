@@ -75,11 +75,22 @@ test("real SDK dispatches only opted-in CLI adapters with writer admission, fina
     assert.ok(result.details.asyncId, JSON.stringify(result)); dispatches.push(result.details);
     return result.details;
   }
+  async function publishedResult(receipt) {
+    const resultPath = path.join(DIRS.results, `${receipt.asyncId}.json`);
+    let result;
+    await until(() => {
+      if (!fs.existsSync(resultPath)) return false;
+      result = json(resultPath);
+      return true;
+    });
+    return result;
+  }
   async function finish(receipt, success = true) {
-    const resultPath = path.join(DIRS.results, `${receipt.asyncId}.json`), statusPath = path.join(receipt.asyncDir, "status.json");
-    await until(() => fs.existsSync(resultPath));
+    // Delivery may consume the publication while process settlement is pending.
+    // Capture the actual result first; still require independent terminal proof.
+    const result = await publishedResult(receipt), statusPath = path.join(receipt.asyncDir, "status.json");
     await until(() => json(statusPath).processTerminal?.state === "observed");
-    const result = json(resultPath), status = json(statusPath);
+    const status = json(statusPath);
     assert.equal(result.success, success, JSON.stringify(result));
     if (status.steps.some(step => step.externalProcess?.pid)) {
       assert.ok(status.processTerminal.instances.some(instance => instance.kind === "external-writer" && instance.processTree.state === "observed"), JSON.stringify(status.processTerminal));
@@ -157,8 +168,9 @@ test("real SDK dispatches only opted-in CLI adapters with writer admission, fina
   const psShim = writeNodeCommand(bin, "ps", 'process.stderr.write("fixture census unavailable"); process.exit(1);');
   const uncertain = await start({ agent: "cursor-agent-fixture", task: "Never execute after unknown preflight" });
   const uncertainStatus = path.join(uncertain.asyncDir, "status.json");
-  await until(() => fs.existsSync(path.join(DIRS.results, `${uncertain.asyncId}.json`)) && json(uncertainStatus).processTerminal?.state === "unknown");
-  assert.equal(json(path.join(DIRS.results, `${uncertain.asyncId}.json`)).success, false);
+  const uncertainResult = await publishedResult(uncertain);
+  await until(() => json(uncertainStatus).processTerminal?.state === "unknown");
+  assert.equal(uncertainResult.success, false);
   fs.rmSync(psShim);
   const blockedGate = gate("unknown-owner-blocked");
   await assert.rejects(execute({ agent: "native-fixture", task: `Do not launch TAU_FIXTURE_GATE:${blockedGate}`, async: false, timeoutMs: 500 }), /timed out|deadline|aborted/i);

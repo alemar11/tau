@@ -53,7 +53,7 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	const socketPath = path.join(runDir, "bridge.sock");
 	const manifestPath = path.join(runDir, "manifest.json");
 	for (const candidate of [socketPath, manifestPath]) {
-		try { const stat = fs.lstatSync(candidate); if (stat.isSymbolicLink()) throw new Error(`Refusing symlink at '${candidate}'.`); fs.rmSync(candidate, { force: true }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+		try { fs.lstatSync(candidate); throw new Error(`Existing Herdr bridge evidence at '${candidate}' requires manual reconciliation.`); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 	}
 	let client: net.Socket | undefined;
 	let context: BridgeContext | undefined;
@@ -124,7 +124,8 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 		send({ type: "event", requestId: activeRequestId, event: { ...event, message }, nativeSessionId });
 	});
 	on("agent_settled", (_event, ctx) => { const requestId = activeRequestId; send({ type: "settled", requestId, nativeSessionId, idle: ctx.isIdle(), pending: ctx.hasPendingMessages(), finalAssistant, finalGit: gitEvidence(process.cwd()) }); if (ctx.isIdle() && !ctx.hasPendingMessages()) activeRequestId = undefined; });
-	on("session_shutdown", () => { server.close(); client?.destroy(); try { fs.rmSync(runDir, { recursive: true, force: true }); } catch {} });
+	// Transport shutdown is not proof that remote writers stopped; keep the runtime evidence.
+	on("session_shutdown", () => { server.close(); client?.destroy(); });
 
 	const server = net.createServer((socket) => {
 		if (client && !client.destroyed) { socket.destroy(); return; }

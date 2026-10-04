@@ -12,9 +12,9 @@ npm test
 npm test --workspace subagents
 ```
 
-**491 Subagents tests pass, with two Windows-only tests skipped, on both Node versions.** The suite covers native execution, optional CLI adapters, terminal inspectors, worktree management and lifecycle contracts. Root type checks pass on both versions. Repository-wide tests on Node 26.10.0 report **825 passed, two skipped, zero failures**. The native PowerShell integration suite is also not executed on macOS. Concurrent Openspace changes are left untouched.
+**518 Subagents tests pass, with two Windows-only tests skipped, on both Node versions.** The suite covers native execution, optional CLI adapters, terminal inspectors, retained placement ownership, worktree management and lifecycle contracts. Root type checks pass on both versions. Repository-wide tests on Node 26.10.0 report **852 passed, two skipped, zero failures**. The native PowerShell integration suite is also not executed on macOS. Concurrent Openspace changes are left untouched.
 
-`npm pack --dry-run --ignore-scripts --workspace subagents --json` verifies the package name/entry and that test files are outside the shipped resource layout: **346 shipped files**, no tests.
+`npm pack --dry-run --ignore-scripts --workspace subagents --json` verifies the package name/entry and that test files are outside the shipped resource layout: **347 shipped files**, no tests.
 
 ## Evidence
 
@@ -22,6 +22,7 @@ npm test --workspace subagents
 - Real foreground SDK and separate background runner with a deterministic local provider; no live model/provider calls. The native smoke makes Git unavailable and asserts it is not probed.
 - Real SDK/public inspector actions and registration while a native background writer is held at a barrier: viewer open/status/close do not stop the child, change process-terminal evidence or release admission. Phase gates continue rejecting project placement.
 - Herdr/Ghostty protocol fixtures: explicit caller identity, durable intent before mutations, retained ambiguous effects, no rollback/fallback/duplicate creation, generation-checked operation locks, changed endpoint/terminal/process rejection, exact viewer argv/token verification, and terminal-presence-only status. No live panes are created or closed.
+- Private placement-engine fixtures: synced bounded intent/receipt journals, explicit workspace selection, retained partial allocations/start failures, no blind retries/rollback closure, original storage namespace, concurrent workspace capacity, replaced directories/lock generations and a real killed local lock-holder process. Bridge shutdown retains runtime evidence. Transport disposal, idle badges and quiet output do not claim remote writer cessation. Public project/machine actions remain disabled.
 - Session-owned, explicitly permitted viewer controls; child-safe command generation cannot grant controls, CLI runners reject steering, child stop preserves its target, terminal control characters are neutralized, and ordinary Node runs the packaged viewer. Nonempty/unsafe inspector state blocks artifact retention.
 - Herdr metadata lifecycle, bounded labels, missed-event reconciliation, attention overlays, coalescing, refresh/disposal and root-UI/headless gating; POSIX command round-trips and Windows literal-argument/PowerShell-version guards.
 - Real public SDK dispatch to local Claude Code, Codex and Cursor protocol fixtures: native/CLI FIFO contention, original launch identity, no implicit Git probes, non-resumable receipts, malformed protocol rejection, queued/running stop, retained worktree mutation evidence and workflow completion barriers.
@@ -43,9 +44,11 @@ npm test --workspace subagents
 - Explicit Tau Web provenance and effective tool availability in foreground/background; Web's owning suite separately verifies transport fixtures and branch-scoped cache behavior.
 - Copied installable resources under `node_modules/subagents` and `node_modules/web`, with host/runtime dependencies supplied locally: the real resource loader and background runner work without relying on development-only source paths or a second private SDK.
 
+A Node 22 full-suite run exposed a test ordering race: the SDK result watcher consumed a published result while the test waited for separate process-terminal evidence. The fixture now captures the publication first without weakening the terminal-proof assertion; the final Node 22 and Node 26 gates pass.
+
 ## Limits
 
-- No live-provider credentials/calls, semantic research-quality evaluation or visual TUI verification. Herdr CLI help/schema and the installed Ghostty AppleScript dictionary were inspected, but host behavior, Automation permissions and actual terminal rendering/focus were not exercised. Inspector fixtures do not validate remote process placement.
+- No live-provider credentials/calls, semantic research-quality evaluation or visual TUI verification. Herdr CLI help/schema and the installed Ghostty AppleScript dictionary were inspected, but host behavior, Automation permissions and actual terminal rendering/focus were not exercised. Inspector and placement-ownership fixtures do not validate remote execution, resource loading or writer settlement. No SSH connection or live terminal mutation was exercised. Local allocation locks are not distributed admission or protection against manual topology changes.
 - No native Windows/Linux run; two Windows-only spawn tests and the native PowerShell integration suite are not executed on macOS. Simulated platform cases are not native OS validation. CLI tests use local protocol fixtures, not actual vendor versions/authentication; process groups cannot prove cessation of arbitrary daemonized writers or external services.
 - Not every crash/reload or Git subprocess failure interleaving is fault-injected. Worktrees are not a sandbox: Git metadata, linked dependencies and external resources remain shared. Cleanup planning is advisory, not atomic authorization; there is no plan-apply mode. Explicit discard requires settlement/ownership and may lose dirty work. Automatic deletion/merge and Gist sharing are not enabled. Deferred scope is tracked in `ROADMAP.md`.
 - The package is private and depends on sibling Tau `web` via `file:../web`; this validates checkout/local-resource installation, not publication of a standalone registry tarball.
