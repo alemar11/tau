@@ -1,4 +1,7 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { createOwnedProcessTreeController } from "../background/owned-process-tree.ts";
+import type { ExternalProcessStatus } from "../../shared/types.ts";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { resolveNodeExecutable } from "../../shared/node-executable.ts";
@@ -118,20 +121,51 @@ export function resolveExternalCliSpawn(command: string, args: readonly string[]
 	return { command: fs.existsSync(bundledNode) ? bundledNode : resolveNodeExecutable(), args: [script, ...args] };
 }
 
-function probeWithTimeout(binaryPath: string, args: readonly string[], env: NodeJS.ProcessEnv, label: string, timeoutMs: number, cwd?: string): string {
+export interface ExternalCliPreflightOptions {
+	signal?: AbortSignal;
+	deadlineAt?: number;
+	onProcess?: (process: Omit<ExternalProcessStatus, "stdoutPath" | "stderrPath">) => void;
+}
+
+async function probeWithTimeout(binaryPath: string, args: readonly string[], env: NodeJS.ProcessEnv, label: string, timeoutMs: number, cwd: string | undefined, options: ExternalCliPreflightOptions): Promise<string> {
+	options.signal?.throwIfAborted();
+	const remaining = options.deadlineAt === undefined ? timeoutMs : Math.min(timeoutMs, options.deadlineAt - Date.now());
+	if (remaining <= 0) throw new Error("External CLI launch deadline expired during preflight");
 	const launch = resolveExternalCliSpawn(binaryPath, args, env);
-	const result = spawnSync(launch.command, launch.args, {
-		cwd,
-		env,
-		encoding: "utf-8",
-		killSignal: "SIGKILL",
-		maxBuffer: MAX_PROBE_OUTPUT_BYTES,
-		timeout: timeoutMs,
-		windowsHide: true,
+	return new Promise((resolve, reject) => {
+		const startedAt = Date.now(), processInstanceId = randomUUID();
+		const child = spawn(launch.command, launch.args, { cwd, env, stdio: ["ignore", "pipe", "pipe"], shell: false, windowsHide: true, detached: process.platform !== "win32" });
+		const tree = child.pid === undefined ? undefined : createOwnedProcessTreeController(child.pid, { termGraceMs: 100, killVerifyMs: 1000 });
+		const initial = { pid: child.pid, processInstanceId, phase: "preflight" as const, startedAt };
+		let failure: Error | undefined, termination: ReturnType<NonNullable<typeof tree>["terminate"]> | undefined;
+		let bytes = 0;
+		const stdout: Buffer[] = [], stderr: Buffer[] = [];
+		const fail = (error: Error) => { failure ??= error; termination ??= tree?.terminate(); };
+		const collect = (parts: Buffer[], chunk: Buffer) => {
+			bytes += chunk.length;
+			if (bytes > MAX_PROBE_OUTPUT_BYTES) fail(new Error("probe output exceeded its byte limit"));
+			else parts.push(chunk);
+		};
+		child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk));
+		child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk));
+		child.once("error", fail);
+		const timer = setTimeout(() => fail(new Error("probe timed out")), remaining);
+		const abort = () => fail(new Error("probe aborted"));
+		options.signal?.addEventListener("abort", abort, { once: true });
+		child.once("close", (exitCode, processSignal) => {
+			clearTimeout(timer); options.signal?.removeEventListener("abort", abort);
+			void (async () => {
+				const processTree = termination ? await termination : await tree?.finishAfterWriterClose();
+				options.onProcess?.({ ...initial, endedAt: Date.now(), exitCode, processSignal, ...(processTree ? { processTree } : {}) });
+				if (processTree?.state === "unknown") throw new Error(`External CLI ${label} preflight process-tree settlement is unknown: ${processTree.reason}`);
+				if (failure) throw new Error(`External CLI ${label} preflight failed: ${failure.message}`, { cause: failure });
+				if (exitCode !== 0) throw new Error(`External CLI ${label} preflight exited with code ${exitCode}: ${Buffer.concat(stderr.length ? stderr : stdout).toString("utf8").trim()}`);
+				resolve(Buffer.concat(stdout).toString("utf8").trim());
+			})().catch(reject);
+		});
+		try { options.onProcess?.(initial); } catch (error) { fail(error instanceof Error ? error : new Error(String(error))); }
+		if (options.signal?.aborted) abort();
 	});
-	if (result.error) throw new Error(`External CLI ${label} preflight failed: ${result.error.message}`, { cause: result.error });
-	if (result.status !== 0) throw new Error(`External CLI ${label} preflight exited with code ${result.status}: ${(result.stderr || result.stdout).trim()}`);
-	return result.stdout.trim();
 }
 
 function narrowPositiveInteger(value: number | undefined, ceiling: number, label: string): number {
@@ -144,7 +178,7 @@ function specKey(spec: ExternalCliPreflightSpec): string {
 	return JSON.stringify([spec.id, spec.versionArgs, spec.helpArgs, spec.evidenceArgs, spec.evidenceLabel, spec.probeTimeoutMs, spec.remote === true]);
 }
 
-export function preflightExternalCli(command: string, spec: ExternalCliPreflightSpec, env: NodeJS.ProcessEnv, cwd?: string): ExternalCliPreflightResult {
+export async function preflightExternalCli(command: string, spec: ExternalCliPreflightSpec, env: NodeJS.ProcessEnv, cwd?: string, options: ExternalCliPreflightOptions = {}): Promise<ExternalCliPreflightResult> {
 	const binaryPath = resolveBinary(command, env);
 	const binaryMtimeMs = fs.statSync(binaryPath).mtimeMs;
 	const lookupKey = JSON.stringify([binaryPath, binaryMtimeMs, specKey(spec)]);
@@ -155,11 +189,11 @@ export function preflightExternalCli(command: string, spec: ExternalCliPreflight
 	const base = cached ?? {
 		binaryPath,
 		binaryMtimeMs,
-		version: probeWithTimeout(binaryPath, spec.versionArgs, env, "version", probeTimeoutMs, cwd),
-		help: probeWithTimeout(binaryPath, spec.helpArgs, env, "help", probeTimeoutMs, cwd),
+		version: await probeWithTimeout(binaryPath, spec.versionArgs, env, "version", probeTimeoutMs, cwd, options),
+		help: await probeWithTimeout(binaryPath, spec.helpArgs, env, "help", probeTimeoutMs, cwd, options),
 	};
 	const evidence = spec.evidenceArgs
-		? probeWithTimeout(binaryPath, spec.evidenceArgs, env, spec.evidenceLabel ?? "evidence", probeTimeoutMs, cwd)
+		? await probeWithTimeout(binaryPath, spec.evidenceArgs, env, spec.evidenceLabel ?? "evidence", probeTimeoutMs, cwd, options)
 		: undefined;
 	const result = { ...base, ...(evidence !== undefined ? { evidence } : {}), cacheHit: Boolean(cached) };
 	spec.validate?.(result);

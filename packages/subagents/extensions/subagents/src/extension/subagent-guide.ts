@@ -6,6 +6,7 @@ export const SUBAGENT_GUIDE_TOPICS = [
 	"overview",
 	"workflows",
 	"agents",
+	"external-runners",
 	"missions",
 	"observability",
 	"tool-reference",

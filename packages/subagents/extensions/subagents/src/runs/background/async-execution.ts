@@ -1000,7 +1000,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 	};
 	const buildSeqStep = (s: SequentialStep, sessionFile?: string, behaviorCwd?: string, progressPrecreated = false, resolvedBehavior?: ResolvedStepBehavior, flatIndex?: number, parallelOutputNamespace?: { stepIndex: number; taskIndex?: number }, runFanoutPath?: string) => {
 		const a = agents.find((x) => x.name === s.agent)!;
-		assertNativeAgent(a);
+		assertNativeAgent(a, true);
 		const effectiveBehavior = resolvedBehavior ?? suppressProgressForReadOnlyTask(resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
 		const requestedMachine = s.machine ?? launchMachine ?? a.machine;
 		const externalRunner = a.runner?.type === "external-cli" || a.runner?.type === "external-job";
@@ -1031,7 +1031,7 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			const unsupported: string[] = [];
 			if (s.model !== undefined && !claudeCodeAdapter) unsupported.push("model override");
 			if (effectiveBehavior.outputSchema !== undefined) unsupported.push("structured output");
-			if (s.acceptance !== undefined || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
+			if ((s.acceptance !== undefined && s.acceptance !== false) || params.agentContract !== undefined || s.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 			if (s.toolBudget !== undefined || params.toolBudget !== undefined || a.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
 			if ((s.fast ?? params.fast ?? a.fast) === true) unsupported.push("fast mode");
 			if (params.contextForAgent?.(s.agent) === "fork") unsupported.push("fork context");
@@ -1743,7 +1743,7 @@ export function executeAsyncSingle(
 	params: AsyncSingleParams,
 ): AsyncExecutionResult | Promise<AsyncExecutionResult> {
 	assertNativeExecution(params, true);
-	assertNativeAgent(params.agentConfig);
+	assertNativeAgent(params.agentConfig, true);
 	const {
 		agent,
 		agentConfig,
@@ -1795,7 +1795,7 @@ export function executeAsyncSingle(
 		if ((params.fast ?? agentConfig.fast) === true) unsupported.push("fast mode");
 		if (params.thinkingOverride !== undefined && !claudeCodeAdapter) unsupported.push("thinking override");
 		if (params.structuredOutputSchema !== undefined) unsupported.push("structured output");
-		if (params.acceptance !== undefined || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
+		if ((params.acceptance !== undefined && params.acceptance !== false) || params.agentContract !== undefined) unsupported.push("acceptance/agent contract");
 		if (params.toolBudget !== undefined || agentConfig.toolBudget !== undefined || params.configToolBudget !== undefined) unsupported.push("tool budget");
 		if (params.context === "fork") unsupported.push("fork context");
 		if ((params.skills?.length ?? 0) > 0) unsupported.push("skills");

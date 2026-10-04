@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentConfig } from "../agents/agents.ts";
+import { isCodeOwnedExternalCliAdapterId } from "../runs/shared/external-cli-contract.ts";
 import type { TrackedMutationSnapshot, ExtensionConfig } from "./types.ts";
 
 export const PHASE_ONE_DISABLED = ["watchdog", "panes", "missions", "preflight", "gates", "external-machines", "extension-bindings"] as const;
@@ -13,8 +14,9 @@ export function phaseOneConfig(config: ExtensionConfig): ExtensionConfig {
 	if (config.missions !== undefined || config.scheduledRuns !== undefined) throw new Error("Missions and schedules are deferred to phase 6.");
 	return { ...config, worktreeProvider: "native", disabledFeatures: [...new Set([...PHASE_ONE_DISABLED, ...(config.disabledFeatures ?? [])])], missions: { enabled: false }, scheduledRuns: { enabled: false }, intercomBridge: { mode: "off", resultDelivery: false }, capacity: { abandonedSlotReleaseAfterMs: false } };
 }
-export function assertNativeAgent(agent: AgentConfig): void {
-	if (agent.runner || agent.machine || (agent.defaultAcceptance !== undefined && agent.defaultAcceptance !== false) || agent.mcpDirectTools?.length || agent.permissions !== undefined || agent.tools?.some((tool) => tool.startsWith("mcp:"))) throw new Error(`Agent '${agent.name}' selects a feature deferred beyond Tau phase 1 (runner, machine, acceptance, permissions or MCP).`);
+export function assertNativeAgent(agent: AgentConfig, allowExternalCli = false): void {
+	const supportedRunner = allowExternalCli && agent.runner?.type === "external-cli" && isCodeOwnedExternalCliAdapterId(agent.runner.adapter);
+	if ((agent.runner && !supportedRunner) || agent.machine || (agent.defaultAcceptance !== undefined && agent.defaultAcceptance !== false) || agent.mcpDirectTools?.length || agent.permissions !== undefined || agent.tools?.some((tool) => tool.startsWith("mcp:"))) throw new Error(`Agent '${agent.name}' selects a feature deferred beyond Tau phase 1 (runner, machine, acceptance, permissions or MCP).`);
 }
 /** Also guard low-level native launch APIs, not only the public tool schema. */
 export function assertNativeExecution(options: object, allowWorktree = false): void {

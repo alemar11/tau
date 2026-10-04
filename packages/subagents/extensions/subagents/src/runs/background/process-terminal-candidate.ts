@@ -18,10 +18,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-export function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer"): value is ProcessInstanceExit {
+export function validProcessInstance(value: unknown, kind?: "runner" | "pi-writer" | "external-writer"): value is ProcessInstanceExit {
 	if (!isRecord(value)) return false;
 	if (typeof value.processInstanceId !== "string" || value.processInstanceId.length === 0) return false;
-	if (kind ? value.kind !== kind : (value.kind !== "runner" && value.kind !== "pi-writer")) return false;
+	if (kind ? value.kind !== kind : (value.kind !== "runner" && value.kind !== "pi-writer" && value.kind !== "external-writer")) return false;
 	if (typeof value.closeObservedAt !== "number" || !Number.isFinite(value.closeObservedAt)) return false;
 	if (typeof value.exitCode !== "number" && value.exitCode !== null) return false;
 	if (typeof value.signal !== "string" && value.signal !== null) return false;
@@ -41,7 +41,7 @@ export function validProcessInstance(value: unknown, kind?: "runner" | "pi-write
 }
 
 function validInstance(value: unknown): value is ProcessInstanceExit {
-	return validProcessInstance(value, "pi-writer");
+	return validProcessInstance(value) && value.kind !== "runner";
 }
 
 export function processTerminalCandidatePath(asyncDir: string): string {

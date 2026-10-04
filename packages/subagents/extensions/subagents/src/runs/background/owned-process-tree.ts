@@ -4,6 +4,7 @@ import type { ProcessTreeTerminal } from "../../shared/types.ts";
 const DEFAULT_TERM_GRACE_MS = 3000;
 const DEFAULT_KILL_VERIFY_MS = 1000;
 const VERIFY_INTERVAL_MS = 25;
+const PS_OPTIONS = { encoding: "utf-8" as const, timeout: 1000, maxBuffer: 4 * 1024 * 1024 };
 
 type SignalResult = "sent" | "absent" | { diagnostic: string };
 
@@ -22,7 +23,7 @@ function signalProcess(id: number, signal: NodeJS.Signals): SignalResult {
 }
 
 function activeProcessGroupMembers(processGroupId: number): number[] | { diagnostic: string } {
-	const result = spawnSync("ps", ["-axo", "pid=,pgid=,stat="], { encoding: "utf-8" });
+	const result = spawnSync("ps", ["-axo", "pid=,pgid=,stat="], PS_OPTIONS);
 	if (result.error || result.status !== 0) {
 		return { diagnostic: result.error ? diagnostic(result.error) : (result.stderr.trim() || `ps exited with ${result.status}`) };
 	}
@@ -35,9 +36,9 @@ function activeProcessGroupMembers(processGroupId: number): number[] | { diagnos
 	return members;
 }
 
-function knownDetachedDescendants(processGroupId: number): number[] {
-	const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid=,stat="], { encoding: "utf-8" });
-	if (result.error || result.status !== 0) return [];
+function knownDetachedDescendants(processGroupId: number): number[] | { diagnostic: string } {
+	const result = spawnSync("ps", ["-axo", "pid=,ppid=,pgid=,stat="], PS_OPTIONS);
+	if (result.error || result.status !== 0) return { diagnostic: result.error ? diagnostic(result.error) : (result.stderr.trim() || `ps exited with ${result.status}`) };
 	const owned = new Set<number>();
 	const outside: { pid: number; ppid: number }[] = [];
 	for (const line of result.stdout.split("\n")) {
@@ -73,11 +74,16 @@ function observed(processGroupId: number): ProcessTreeTerminal {
 	return { state: "observed", mechanism: "posix-process-group", processGroupId, verifiedAt: Date.now() };
 }
 
-function observedUnlessLiveDetached(processGroupId: number, detached: readonly number[]): ProcessTreeTerminal {
-	const live = detached.filter((pid) => {
-		const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf-8" });
-		return result.status === 0 && Boolean(result.stdout.trim()) && !result.stdout.trim().startsWith("Z");
-	});
+function observedUnlessLiveDetached(processGroupId: number, detached: readonly number[] | { diagnostic: string }): ProcessTreeTerminal {
+	if ("diagnostic" in detached) return { state: "unknown", reason: "verification-failed", diagnostic: detached.diagnostic };
+	const live: number[] = [];
+	for (const pid of detached) {
+		const result = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], PS_OPTIONS);
+		if (result.error || (result.status !== 0 && !(result.status === 1 && !result.stdout.trim() && !result.stderr.trim()))) {
+			return { state: "unknown", reason: "verification-failed", diagnostic: result.error ? diagnostic(result.error) : `ps exited with ${result.status}` };
+		}
+		if (result.stdout.trim() && !result.stdout.trim().startsWith("Z")) live.push(pid);
+	}
 	if (live.length === 0) return observed(processGroupId);
 	return { state: "unknown", reason: "verification-failed", diagnostic: `Owned detached descendant(s) still active: ${live.join(", ")}.` };
 }
@@ -106,7 +112,11 @@ export function createOwnedProcessTreeController(
 			const detached = knownDetachedDescendants(pid);
 			const term = signalProcess(target, "SIGTERM");
 			if (term !== "sent" && term !== "absent") {
-				return { state: "unknown", reason: "signal-failed", diagnostic: term.diagnostic };
+				// A closing group can race the signal (including EPERM on macOS).
+				// Only an independent, successful census can establish its absence.
+				const members = activeProcessGroupMembers(pid);
+				if (!Array.isArray(members) || members.length > 0) return { state: "unknown", reason: "signal-failed", diagnostic: term.diagnostic };
+				return observedUnlessLiveDetached(pid, detached);
 			}
 			const termExit = await waitUntilGroupTerminal(pid, options.termGraceMs ?? DEFAULT_TERM_GRACE_MS);
 			if (termExit === false) return observedUnlessLiveDetached(pid, detached);

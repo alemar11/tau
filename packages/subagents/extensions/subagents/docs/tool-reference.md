@@ -10,6 +10,10 @@ subagent({agent:"oracle", task:"Challenge the chosen design", context:"fork"});
 
 Background dispatch returns run identity/artifact locations, not task success. Foreground returns the completed result. Model selection is explicit call → profile → coordinator at launch, with no hidden provider/model/runner fallback. Missing tools and failed required extensions are errors.
 
+## Optional CLI runners
+
+`claude-code`, `codex-exec`, `cursor-agent` and their `-writer` profiles support background-only execution and terminal stop. Omit `async` or use `async:true`; `async:false` fails. Native model inheritance, fork, live steering, durable resume, structured output and supervisor transport are not available. Claude accepts explicit model/effort overrides; Codex/Cursor use their own model configuration. Ordinary workflows await final results unless the child explicitly requests async dispatch. See [external runners](external-runners.md).
+
 ## Native worktree isolation
 
 Add `worktree:true` or `isolation:"worktree"`, optionally `baseRef:"refs/heads/main"`. The source must be clean; allocation uses Git only. Distinct worktrees permit concurrent writers while same-cwd writers remain serialized. Results expose `parallelHandoff` with retained paths, branches and snapshot patches. No automatic merge or cleanup occurs. See [worktrees](worktrees.md), including cleanup authorization and shared-resource limits.

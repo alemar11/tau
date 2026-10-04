@@ -683,7 +683,10 @@ export interface PiWriterProcessInstanceExit {
 	processTree: ProcessTreeTerminal;
 }
 
-export type ProcessInstanceExit = RunnerProcessInstanceExit | PiWriterProcessInstanceExit;
+export interface ExternalWriterProcessInstanceExit extends Omit<PiWriterProcessInstanceExit, "kind"> {
+	kind: "external-writer";
+}
+export type ProcessInstanceExit = RunnerProcessInstanceExit | PiWriterProcessInstanceExit | ExternalWriterProcessInstanceExit;
 
 export interface CanonicalSessionTerminal {
 	canonicalSessionId: string;
@@ -1869,6 +1872,10 @@ export interface ExternalJobStatus {
 }
 
 export interface ExternalProcessStatus {
+	processInstanceId?: string;
+	phase?: "preflight" | "execution";
+	/** Observed CLI process-group settlement, distinct from runner termination. */
+	processTree?: ProcessTreeTerminal;
 	pid?: number;
 	startedAt: number;
 	endedAt?: number;

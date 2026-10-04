@@ -23,17 +23,24 @@ subagent({agent:"oracle", task:"Challenge the chosen design", context:"fork"});
 subagent({action:"status", id:"<run-id>", view:"transcript"});
 ```
 
-Background is the default; a dispatch receipt is **not** completion. Model precedence is call → profile → coordinator at launch. Context is fresh except oracle's fork preference; an explicit unavailable fork fails. Project instructions follow Pi trust. Seven bundled roles: scout, researcher, evidence-auditor, worker, reviewer, oracle, delegate.
+Background is the default; a dispatch receipt is **not** completion. Native model precedence is call → profile → coordinator at launch. Context is fresh except oracle's fork preference; an explicit unavailable fork fails. Project instructions follow Pi trust. Seven bundled roles: scout, researcher, evidence-auditor, worker, reviewer, oracle, delegate.
 
 Custom profiles: `$PI_CODING_AGENT_DIR/tau-subagents/agents/` (default `~/.pi/agent/tau-subagents/agents/`) and `.pi/tau-subagents/agents/`. Settings use `tauSubagents`; extension configuration is `tau-subagents/config.json` beneath the agent directory.
 
 - [Profiles and Tau Web](extensions/subagents/docs/agents.md)
+- [Optional Claude Code, Codex and Cursor runners](extensions/subagents/docs/external-runners.md)
 - [Workflow API and dependency barriers](extensions/subagents/docs/workflows.md)
 - [Native Git worktrees and explicit cleanup](extensions/subagents/docs/worktrees.md)
 - [Controls, supervisor replies, output and Pi UI](extensions/subagents/docs/tool-reference.md)
 - [Configuration, limits and ownership](extensions/subagents/docs/configuration.md)
 
 `/subagents` opens the manager; `/subagents-fleet` shows live runs and Pi-only transcript inspection. Structured status/control also work headlessly. `contact_supervisor` routes to the immediate parent; `subagent_supervisor` answers correlated questions. Steering, interrupt, terminal stop and explicit resume remain distinct.
+
+## Optional CLI runners
+
+Six opt-in profiles support installed Claude Code, Codex and Cursor CLIs: `claude-code`, `codex-exec`, `cursor-agent`, and their explicit `-writer` variants. They are background-only, one-shot executions with bounded preflight/parsing, terminal stop and explicit non-resumable receipts. Native fork, steering, structured output and supervisor transports are not available. No CLI is installed, authenticated or selected as a fallback automatically. See the runner guide for access flags and operator-trust requirements.
+
+All local CLI profiles use writer admission, including their preflight processes. Probe/execution group closure and output finalization must be observed; uncertain processes retain ownership and private prompt files. Native worktree retention and mutation evidence also apply.
 
 ## Writer admission and recovery
 
@@ -49,7 +56,7 @@ Default limits: depth 2, 64 spawns per run, workflow concurrency 20, single-chil
 
 Phase two enables native Git worktrees, tracked mutation evidence, workflow lanes and handoff management. Use `worktree:true` (or `isolation:"worktree"`), optionally `baseRef`. Distinct worktrees allow concurrent writers; the same cwd still uses FIFO admission. Worktrees and branches are **retained by default**, including after cancellation. `worktree.cleanup` creates a read-only plan; `worktree.discard` requires explicit authorization and verified settlement/ownership. Merge and supersession actions record evidence, never execute a merge. See the worktree guide for safety and shared-resource limits.
 
-Worktrunk and session sharing through GitHub Gist are explicitly excluded; `gh` is not a Subagents runtime requirement. External AI runners, terminal managers, optional integrations, missions/schedules/watchdog and advanced gates remain tracked for subsequent increments. Their public launch options/actions are rejected. Deferred source is not advertised as an installed capability. Advanced package subpath APIs and council/prompt resources still require their own increments; see `ROADMAP.md`.
+Worktrunk and session sharing through GitHub Gist are explicitly excluded; `gh` is not a Subagents runtime requirement. Terminal managers, optional integrations, missions/schedules/watchdog and advanced gates remain tracked for subsequent increments. Their public launch options/actions are rejected. Deferred source is not advertised as an installed capability. Advanced package subpath APIs and council/prompt resources still require their own increments; see `ROADMAP.md`.
 
 ## Validation
 

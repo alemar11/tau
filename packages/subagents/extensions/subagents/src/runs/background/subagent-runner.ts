@@ -29,7 +29,7 @@ import {
 	type CostSummary,
 	type LaunchResolvedChildExtensions,
 	type RuntimeAcknowledgedChildExtensions,
-	type PiWriterProcessInstanceExit,
+	type ProcessInstanceExit,
 	type NestedRouteInfo,
 	type NestedRunSummary,
 	type ResolvedControlConfig,
@@ -88,6 +88,7 @@ import { formatMidToolExitError, isOrdinaryToolForMidToolExit, isUnexplainedProc
 import { formatChildToolDiagnostic } from "../shared/tool-availability.ts";
 import { buildTimeoutRecoverySummary, collectTrackedMutationEvidence } from "../shared/mutation-evidence.ts";
 import { unavailableMutationSnapshot } from "../../shared/phase-one.ts";
+import { admitWriter } from "../shared/writer-admission.ts";
 import { snapshotTrackedMutations } from "../shared/mutation-evidence.ts";
 import { collectDynamicResults, DynamicFanoutError, materializeDynamicParallelStep, validateDynamicCollection } from "../shared/dynamic-fanout.ts";
 import { claimRunFanoutBatch, getRunFanoutBudgetSnapshot } from "../shared/run-fanout-budget.ts";
@@ -798,7 +799,7 @@ export async function runSingleStepInner(
 	if (step.runner?.type === "external-cli") {
 		const externalCwd = step.machine?.cwd ?? step.cwd ?? ctx.cwd;
 		const externalAbortSignal = combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]);
-		if (!step.machine && externalAbortSignal) await ctx.prepareExternalActivity?.(externalCwd, externalAbortSignal);
+		if (step.gitEvidence && !step.machine && externalAbortSignal) await ctx.prepareExternalActivity?.(externalCwd, externalAbortSignal);
 		if (externalAbortSignal?.aborted) {
 			const stopped = ctx.stopSignal?.aborted === true;
 			const message = stopped ? ctx.stopMessage ?? "Subagent stopped by user." : ctx.timeoutMessage ?? "Subagent timed out.";
@@ -856,6 +857,9 @@ export async function runSingleStepInner(
 			if (chunk.length > 0) ctx.onExternalStreamActivity?.();
 		};
 		const externalInput = omitUndefinedProperties({
+			signal: externalAbortSignal,
+			timeoutSignal: ctx.timeoutSignal,
+			deadlineAt: ctx.deadlineAt,
 			command: adapterLaunch?.command ?? runner.command,
 			args: adapterLaunch?.args ?? runner.args,
 			cwd: externalCwd,
@@ -1513,11 +1517,52 @@ async function runSingleStep(
 	const finalizers: Array<() => Promise<void>> = [];
 	let finished = false;
 	const finalizeWriters = async () => { while (finalizers.length) await finalizers.shift()!(); };
-	try { return await runSingleStepInner(step, { ...ctx, onWriterFinalizer: (finalize) => {
-		if (finished) void finalize().catch((error) => console.error("Writer ownership remains uncertain:", error));
-		else finalizers.push(finalize);
-	}, finalizeWriters }); }
-	finally { finished = true; await finalizeWriters(); }
+	// External adapters can run trusted CLI hooks even in read-only mode. Admit
+	// them conservatively as writers and retain unknown process-tree ownership.
+	const inherited = ctx.inheritedChildRuntime?.writerIdentity;
+	let externalLease: Awaited<ReturnType<typeof admitWriter>> | undefined;
+	if (step.runner?.type === "external-cli" && !step.machine) {
+		try {
+			externalLease = await admitWriter({
+				rootSessionId: inherited?.rootSessionId ?? step.parentSessionId ?? "",
+				runId: `${ctx.id}:${ctx.flatIndex}`,
+				ancestors: [...(inherited?.ancestors ?? []), ...(inherited ? [inherited.runId] : [])],
+				cwd: step.cwd ?? ctx.cwd,
+				signal: combinedAbortSignal([ctx.timeoutSignal, ctx.stopSignal]), deadlineAt: ctx.deadlineAt,
+			});
+		} catch (error) {
+			// Admission failed before any CLI could start. Keep the ordinary result
+			// finalization path so queued cancellation has explicit no-writer proof.
+			return omitUndefinedProperties({ agent: step.agent, output: "", exitCode: 1,
+				error: error instanceof Error ? error.message : String(error),
+				timedOut: ctx.timeoutSignal?.aborted || (ctx.deadlineAt !== undefined && Date.now() >= ctx.deadlineAt) || undefined,
+				stopped: ctx.stopSignal?.aborted || undefined,
+				execution: { status: "failed", success: false, exitCode: 1 } });
+		}
+	}
+	const pendingProcesses = new Set<string>();
+	const snapshot = externalLease && step.gitEvidence ? snapshotTrackedMutations(step.cwd ?? ctx.cwd) : undefined;
+	try {
+		const result = await runSingleStepInner(step, { ...ctx, onExternalProcess: (process) => {
+			if (process.pid !== undefined) {
+				const key = process.processInstanceId ?? `unverified:${process.pid}`;
+				pendingProcesses.add(key);
+				if (process.endedAt !== undefined && process.processTree?.state === "observed") pendingProcesses.delete(key);
+			}
+			ctx.onExternalProcess?.(process);
+		}, onWriterFinalizer: (finalize) => {
+			if (finished) void finalize().catch((error) => console.error("Writer ownership remains uncertain:", error));
+			else finalizers.push(finalize);
+		}, finalizeWriters });
+		if (snapshot) result.effects = { ...result.effects, trackedMutations: collectTrackedMutationEvidence(
+			pendingProcesses.size ? { ...snapshot, unavailable: "External writer settlement is unknown" } : snapshot,
+			step.cwd ?? ctx.cwd) };
+		return result;
+	} finally {
+		finished = true;
+		await finalizeWriters();
+		if (pendingProcesses.size === 0) await externalLease?.release();
+	}
 }
 
 type RunnerStatusStep = NonNullable<AsyncStatus["steps"]>[number] & {
@@ -2199,7 +2244,13 @@ export async function runSubagent(
 		}
 		statusWriteCoalescer.schedule(statusPath);
 	};
+	const externalProcesses = new Map<number, Map<string, ExternalProcessStatus>>();
 	const updateExternalProcess = (index: number, process: ExternalProcessStatus): void => {
+		if (process.pid !== undefined) {
+			const instances = externalProcesses.get(index) ?? new Map<string, ExternalProcessStatus>();
+			instances.set(process.processInstanceId ?? `unverified:${process.pid}`, process);
+			externalProcesses.set(index, instances);
+		}
 		requiredStatusStep(statusPayload, index).externalProcess = process;
 		statusPayload.lastUpdate = Date.now();
 		writeStatusPayload();
@@ -5046,12 +5097,16 @@ export async function runSubagent(
 	runPersistence.dispose();
 	indexPersistence.dispose();
 	if (config.runnerProcessInstanceId) {
-		// Children run inside this process, so no step has writer processes to prove terminal.
-		const writers: Record<string, PiWriterProcessInstanceExit[]> = {};
+		// Native SDK sessions live inside the runner. External CLI processes need
+		// their own observed group closure; the runner exiting is not their proof.
+		const writers: Record<string, ProcessInstanceExit[]> = {};
 		const expectedWriters: Record<string, number> = {};
-		for (const index of results.keys()) {
-			writers[String(index)] = [];
-			expectedWriters[String(index)] = 0;
+		for (const index of statusPayload.steps.keys()) {
+			const instances = [...(externalProcesses.get(index)?.values() ?? [])];
+			writers[String(index)] = instances.flatMap((process): ProcessInstanceExit[] => process.processInstanceId && process.endedAt !== undefined && process.processTree
+				? [{ kind: "external-writer", processInstanceId: process.processInstanceId, attempt: 0,
+					closeObservedAt: process.endedAt, exitCode: process.exitCode ?? null, signal: process.processSignal ?? null, processTree: process.processTree }] : []);
+			expectedWriters[String(index)] = instances.length;
 		}
 		const candidate: ProcessTerminalCandidate = {
 			version: 1,

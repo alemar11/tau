@@ -195,7 +195,7 @@ export function finalizeProcessTerminal(
 				proof = unknownProof(runId, runnerClose.processInstanceId, "canonical-session-release-unverified");
 			} else if (inconsistentWriters || (allWriters.length === 0 && expectedEntries.length === 0)) {
 				proof = unknownProof(runId, runnerClose.processInstanceId, "writer-close-unverified");
-			} else if (allWriters.some((writer) => writer.kind === "pi-writer" && writer.processTree.state !== "observed")) {
+			} else if (allWriters.some((writer) => writer.kind !== "runner" && writer.processTree.state !== "observed")) {
 				proof = unknownProof(runId, runnerClose.processInstanceId, "process-tree-unverified");
 			} else {
 				const runner: ProcessInstanceExit = { kind: "runner", ...runnerClose };

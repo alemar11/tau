@@ -2550,7 +2550,7 @@ function canonicalizeExecutionParams(params: SubagentParamsLike, agents: AgentCo
 	const resolve = (name: string, location?: string): { name?: string; error?: string } => {
 		const result = canonicalizeAgentName(name, agents, diagnostics, context);
 		const agent = agents.find((entry) => entry.name === result.name);
-		try { if (agent) assertNativeAgent(agent); } catch (error) { return { error: String(error) }; }
+		try { if (agent) assertNativeAgent(agent, true); } catch (error) { return { error: String(error) }; }
 		return result.error && location ? { error: `${result.error} (${location})` } : result;
 	};
 	if (params.agent) {

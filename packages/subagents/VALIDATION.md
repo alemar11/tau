@@ -1,4 +1,4 @@
-# Native core and Git management validation
+# Subagents validation
 
 Target: Pi **0.99.1**, Node **22.19.0+**. Local automated validation was run on macOS with Node **22.19.0** and **26.10.0**, using the pinned host SDK.
 
@@ -12,7 +12,7 @@ npm test
 npm test --workspace subagents
 ```
 
-**339 Subagents tests pass on both Node versions**, covering native execution, worktree isolation/management and lifecycle contracts. Root type checks pass on both versions. The latest root `npm test` on Node 26.10.0 passed **663 tests** across the workspaces; unrelated concurrent Openspace work was left unchanged.
+**421 Subagents tests pass, with two Windows-only tests skipped, on both Node versions.** The suite covers native execution, optional CLI adapters, worktree management and lifecycle contracts. Root type checks pass on both versions. Repository-wide tests on Node 26.10.0 report **755 passed, two skipped, zero failures**. Concurrent Openspace changes are left untouched.
 
 `npm pack --dry-run --ignore-scripts --workspace subagents --json` verifies the package name/entry and that test files are outside the shipped resource layout.
 
@@ -20,6 +20,9 @@ npm test --workspace subagents
 
 - Real Pi loader and public tool execution; explicit fork rejection, profile discovery and model selection.
 - Real foreground SDK and separate background runner with a deterministic local provider; no live model/provider calls. The native smoke makes Git unavailable and asserts it is not probed.
+- Real public SDK dispatch to local Claude Code, Codex and Cursor protocol fixtures: native/CLI FIFO contention, original launch identity, no implicit Git probes, non-resumable receipts, malformed protocol rejection, queued/running stop, retained worktree mutation evidence and workflow completion barriers.
+- Bounded asynchronous preflight with cancellation/deadlines, per-probe process identity and descendant settlement; raw log/parser bounds, environment allowlists, safe argv/private prompt transport, model/effort validation, reserved read-only names and receipt persistence.
+- Failed process census keeps ownership and private prompts even after runner exit; a subsequent native writer cannot launch. EPERM alone is never terminal evidence, and missing descendant enumeration fails closed. Terminal observer failures propagate only after logs settle.
 - Trusted/untrusted repository context; missing selected extension rejection; attempted dynamic reader capability expansion cannot write.
 - Real mixed foreground/background writer contention with file barriers. The next writer waits through output finalization and does not claim its predecessor's file.
 - FIFO/cancellation/deadline/symlink scope, generation-safe release, descendant conflict, malformed state, tool/finalizer barriers, independent roots, separate processes and killed-owner retention.
@@ -39,7 +42,7 @@ npm test --workspace subagents
 ## Limits
 
 - No live-provider credentials/calls, semantic research-quality evaluation or visual TUI verification.
-- No native Windows/Linux run; simulated platform unit cases are not native OS validation.
+- No native Windows/Linux run; two Windows-only spawn tests are skipped on macOS. Simulated platform cases are not native OS validation. CLI tests use local protocol fixtures, not actual vendor versions/authentication; process groups cannot prove cessation of arbitrary daemonized writers or external services.
 - Not every crash/reload or Git subprocess failure interleaving is fault-injected. Worktrees are not a sandbox: Git metadata, linked dependencies and external resources remain shared. Cleanup planning is advisory, not atomic authorization; there is no plan-apply mode. Explicit discard requires settlement/ownership and may lose dirty work. Automatic deletion/merge and Gist sharing are not enabled. Deferred scope is tracked in `ROADMAP.md`.
 - The package is private and depends on sibling Tau `web` via `file:../web`; this validates checkout/local-resource installation, not publication of a standalone registry tarball.
 - `npm audit` reports one high-severity transitive `brace-expansion` issue in Pi 0.99.1's published shrinkwrap (`5.0.9`). Normal `npm update`/`npm audit fix` do not replace that locked host dependency. Pi was not silently upgraded and its installed files were not patched. This remains a host SDK security caveat.

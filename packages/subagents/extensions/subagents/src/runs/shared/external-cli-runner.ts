@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { finished } from "node:stream/promises";
@@ -161,6 +162,9 @@ export function runExternalCli(input: {
 	prompt: string;
 	asyncDir: string;
 	stepIndex: number;
+	signal?: AbortSignal;
+	timeoutSignal?: AbortSignal;
+	deadlineAt?: number;
 	environment?: { allowlist: readonly string[]; values?: Readonly<Record<string, string>> };
 	preflight?: ExternalCliPreflightSpec;
 	parser?: ExternalCliParser;
@@ -184,7 +188,7 @@ export function runExternalCli(input: {
 		parserStreamBytes: narrowLimit(input.limits?.parserStreamBytes, MAX_PARSER_STREAM_BYTES, "parserStreamBytes"),
 		parserOutputBytes: narrowLimit(input.limits?.parserOutputBytes, MAX_PARSER_OUTPUT_BYTES, "parserOutputBytes"),
 	};
-	return new Promise((resolve, reject) => {
+	return new Promise((resolve, reject) => void (async () => {
 		const startedAt = Date.now();
 		const stdoutPath = path.join(input.asyncDir, `external-${input.stepIndex}.stdout.log`);
 		const stderrPath = path.join(input.asyncDir, `external-${input.stepIndex}.stderr.log`);
@@ -193,15 +197,25 @@ export function runExternalCli(input: {
 		const stderrStream = fs.createWriteStream(stderrPath, { flags: "w" });
 		const streamsFinished = Promise.allSettled([finished(stdoutStream), finished(stderrStream)]);
 		const createdDirectories: string[] = [];
-		let promptFileCreated = false;
+		let promptFileCreated = false, settlementUncertain = false;
+		const reportProcess = (process: ExternalProcessStatus) => {
+			settlementUncertain ||= process.processTree?.state === "unknown";
+			input.onProcess?.(process);
+		};
 		const cleanupTemporaryPaths = () => {
+			if (settlementUncertain) return;
 			if (input.promptFilePath && promptFileCreated) fs.rmSync(input.promptFilePath, { force: true });
 			for (const directory of createdDirectories.reverse()) fs.rmSync(directory, { recursive: true, force: true });
 		};
 		const env = externalEnvironment(input.environment?.allowlist, input.environment?.values);
 		let preflight: ExternalCliPreflightResult | undefined;
 		let launch: ExternalCliSpawn;
+		const checkLaunch = () => {
+			input.signal?.throwIfAborted();
+			if (input.deadlineAt !== undefined && Date.now() >= input.deadlineAt) throw new Error("External CLI launch deadline expired");
+		};
 		try {
+			checkLaunch();
 			for (const directory of input.temporaryDirectories ?? []) {
 				fs.mkdirSync(directory, { mode: 0o700 });
 				createdDirectories.push(directory);
@@ -212,8 +226,12 @@ export function runExternalCli(input: {
 				try { fs.writeFileSync(promptDescriptor, input.prompt, { encoding: "utf-8" }); }
 				finally { fs.closeSync(promptDescriptor); }
 			}
-			if (input.preflight) preflight = preflightExternalCli(input.command, input.preflight, env, input.cwd);
+			if (input.preflight) preflight = await preflightExternalCli(input.command, input.preflight, env, input.cwd, {
+				signal: input.signal, deadlineAt: input.deadlineAt,
+				onProcess: (process) => reportProcess({ ...process, stdoutPath, stderrPath }),
+			});
 			launch = resolveExternalCliSpawn(preflight?.binaryPath ?? input.command, input.args ?? [], env);
+			checkLaunch();
 		} catch (error) {
 			const endedAt = Date.now();
 			const externalProcess = { startedAt, endedAt, durationMs: endedAt - startedAt, exitCode: 1, processSignal: null, stdoutPath, stderrPath, ...(input.finalOutputPath ? { finalOutputPath: input.finalOutputPath } : {}) } satisfies ExternalProcessStatus;
@@ -224,7 +242,10 @@ export function runExternalCli(input: {
 				catch (cleanupError) { reject(cleanupError); return; }
 				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
 				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
-				else resolve({ output: "", exitCode: 1, error: error instanceof Error ? error.message : String(error), processSignal: null, externalProcess });
+				else resolve({ output: "", exitCode: 1, error: error instanceof Error ? error.message : String(error), processSignal: null, externalProcess,
+					...(input.timeoutSignal?.aborted || (input.deadlineAt !== undefined && Date.now() >= input.deadlineAt) ? { timedOut: true } : {}),
+					...(input.signal?.aborted && !input.timeoutSignal?.aborted ? { stopped: true } : {}),
+				});
 			});
 			return;
 		}
@@ -347,12 +368,13 @@ export function runExternalCli(input: {
 		}
 		const initialProcess: ExternalProcessStatus = {
 			...(typeof child.pid === "number" ? { pid: child.pid } : {}),
+			processInstanceId: randomUUID(), phase: "execution",
 			startedAt,
 			stdoutPath,
 			stderrPath,
 			...(input.finalOutputPath ? { finalOutputPath: input.finalOutputPath } : {}),
 		};
-		input.onProcess?.(initialProcess);
+		try { reportProcess(initialProcess); } catch (error) { failParser(error); }
 		child.stdout.on("data", (chunk: Buffer) => {
 			parseChunk(chunk);
 			writeBoundedLog(child.stdout, stdoutStream, chunk, stdoutLog, limits.stdoutLogBytes);
@@ -366,6 +388,9 @@ export function runExternalCli(input: {
 		});
 		input.registerTimeout?.(() => terminate("timeout"));
 		input.registerStop?.(() => terminate("stop"));
+		const onAbort = () => terminate(input.timeoutSignal?.aborted ? "timeout" : "stop");
+		input.signal?.addEventListener("abort", onAbort, { once: true });
+		if (input.signal?.aborted) onAbort();
 		child.stdin.on("error", () => {});
 		child.stdin.end(input.promptFilePath ? undefined : input.prompt);
 		let spawnError: Error | undefined;
@@ -382,6 +407,7 @@ export function runExternalCli(input: {
 		});
 		child.once("close", (exitCode, signal) => {
 			settled = true;
+			input.signal?.removeEventListener("abort", onAbort);
 			if (progressTimer) clearTimeout(progressTimer);
 			flushProgress();
 			input.registerTimeout?.(undefined);
@@ -391,6 +417,7 @@ export function runExternalCli(input: {
 				const endedAt = Date.now();
 				const externalProcess: ExternalProcessStatus = {
 					...initialProcess,
+					...(treeProof ? { processTree: treeProof } : {}),
 					endedAt,
 					durationMs: endedAt - startedAt,
 					exitCode,
@@ -400,10 +427,10 @@ export function runExternalCli(input: {
 					...(stdoutLog.total > stdoutLog.bytes ? { stdoutTruncated: true } : {}),
 					...(stderrLog.total > stderrLog.bytes ? { stderrTruncated: true } : {}),
 				};
-				input.onProcess?.(externalProcess);
+				settlementUncertain ||= treeProof?.state === "unknown";
 				const stderr = stderrTail.text().trim();
 				const parserFailure = parserError?.message ?? (parserTerminal?.state === "failed" ? parserTerminal.error ?? "External CLI parser reported terminal failure." : undefined);
-				const treeFailure = process.platform !== "win32" && treeProof?.state === "unknown"
+				const treeFailure = treeProof?.state === "unknown"
 					? `Process-tree cleanup failed: ${treeProof.reason}.`
 					: undefined;
 				const error = stopped
@@ -429,9 +456,10 @@ export function runExternalCli(input: {
 				const streamFailure = streamResults.find((streamResult) => streamResult.status === "rejected");
 				try { cleanupTemporaryPaths(); }
 				catch (cleanupError) { reject(cleanupError); return; }
+				reportProcess(externalProcess);
 				if (streamFailure?.status === "rejected") reject(streamFailure.reason);
 				else resolve(result);
-			})();
+			})().catch(reject);
 		});
-	});
+	})().catch(reject));
 }

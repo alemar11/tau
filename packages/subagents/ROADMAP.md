@@ -20,11 +20,16 @@ Managed children capture bounded tracked-file evidence after admission, includin
 
 Only native Git worktrees are supported. Worktrunk and session sharing through GitHub Gist are explicitly excluded, not deferred. Subagents does not require `gh`; this does not restrict operators or agents using it for separately authorized GitHub work.
 
+## Phase 3: optional CLI runners
+
+The code-owned Claude Code, Codex and Cursor adapters and their read-only/writer profiles are enabled as background-only, one-shot runners. Native and CLI writers share admission; asynchronous deadline-bound preflight probes and execution each carry process-group settlement evidence. Unknown writers retain ownership, including after failed census or cancellation. Workflows await final results, native Git worktrees remain retained, and receipts explicitly reject unsupported resume/steering/fork/structured-output capabilities. See [external runners](extensions/subagents/docs/external-runners.md).
+
+Validation uses local CLI protocol fixtures through the real SDK, not vendor authentication or live models. No runner installation, login, fallback or permission bypass is added.
+
 ## Remaining phases
 
 | Phase | Scope |
 | --- | --- |
-| 3 | External Claude Code, Codex and Cursor runners and profiles |
 | 4 | Herdr/Ghostty placement and terminal inspection/status integration |
 | 5 | Optional messaging, MCP, permission and provider integrations |
 | 6 | Missions, schedules, watchdog, host steps and advanced acceptance gates |
