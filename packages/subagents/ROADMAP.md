@@ -1,5 +1,20 @@
 # Subagents scope and roadmap
 
+## Delivery ledger
+
+Current implemented baseline: `a430636`. “Enabled” below refers to local package behavior, not publication or live-provider/platform certification. The root [development map](../../DEVELOPMENT.md) routes repository-wide work; this file owns Subagents' current status.
+
+| Increment | Commit | State |
+| --- | --- | --- |
+| Native core, supervision, workflows and writer FIFO | `e5d6051` | Enabled |
+| Native Git worktrees, lanes and handoff management | `c2b9968` | Enabled |
+| Opt-in Claude Code, Codex and Cursor profiles | `ab8dd38` | Enabled; background one-shot only |
+| Herdr/Ghostty inspectors and Herdr status metadata | `b5cebde` | Enabled; observation is not process placement |
+| Retained Herdr placement intent/receipt ownership | `bab10f1` | Private foundation; placement gated |
+| Bounded Herdr RPC/Pi bridge transport | `a13bf94` | Private foundation; placement gated |
+| Managed execution host reusing SDK/CLI engines | `a430636` | Locally tested; no pane bootstrap/transport wiring |
+| Optional integrations (5), advanced core (6) | — | Pending; retained source is not enabled capability |
+
 ## Phase 1: native core
 
 - Seven bundled roles and custom Markdown profiles, with explicit model, context, tools, skills and extension resolution.
@@ -48,15 +63,45 @@ Exclusive private records reserve the runtime slot and run ID. A synced runner-i
 
 This is a tested ownership/transport foundation and **locally exercised execution-host component, not enabled placement**. It is not yet wired to a pane-host bootstrap or remote transport. Public project panes, saved-machine configuration, allocation-wide deadlines, complete remote resource/identity contracts, supervision routing and trustworthy end-to-end settlement/recovery remain required. Local tests exercise SDK sessions and CLI protocol fixtures, not SSH or live terminal mutation. The execution-host FIFO coordinates only cooperating runs sharing its namespace and root identity; local allocation locks do not coordinate other hosts or manual Herdr operations.
 
-## Remaining phases
+## Remaining work and exit criteria
 
-| Phase | Scope |
-| --- | --- |
-| 4b | Herdr project panes and native/CLI process placement |
-| 5 | Optional messaging, MCP, permission and provider integrations |
-| 6 | Missions, schedules, watchdog, host steps and advanced acceptance gates |
+### 4b — next, still gated
 
-Automatic memory/refinement policy, council/prompt resources, package subpath APIs and embedded/external-job adapters need scoped increments and behavioral coverage before becoming supported public contracts. Deferred features are rejected at active execution boundaries; they are not silently enabled through defaults.
+1. **Pane-host bootstrap:** start the managed one-shot execution owner on the selected host using the installed package and SDK/CLI engines. Bind runtime/run/root-session/runner identities before dispatch. Do not fall back to the retained interactive-agent launch path or rediscover ambient extensions.
+2. **Transport connection:** carry explicit profile/model/skill/read selections and host project-trust decisions; bound requests, result/artifact transfer, cancellation and reconnect. Preserve the original deadline through allocation, startup, admission and execution, rather than giving each stage a fresh timeout.
+3. **End-to-end authority:** distinguish transport acknowledgement, result publication, live process closure and writer release. Preserve the original host storage namespace and uncertain effects across disconnect/crash. Reconnect must not duplicate a launch, adopt a foreign generation or manufacture settlement from idle badges/PIDs. Route immediate-parent supervision explicitly; nested cross-host delegation stays unavailable until lineage and budgets can be carried correctly.
+4. **Public machine/project wiring:** expose saved-machine resources and explicit workspace selection only after the preceding contracts work. Adapt project-pane ownership/status/close semantics; retain panes and artifacts by default. Existing local allocation serialization is not cross-host admission or protection against manual topology changes.
+5. **Gate removal evidence:** exercise the public dispatch path with real local SDK/CLI processes and socket/host protocol fixtures, including lost acknowledgements, disconnect, replay, cancellation while queued/running, retained artifacts and failed ownership writes. Run root gates and minimum-Node checks. Live SSH, Herdr/Ghostty mutations and provider calls require separate authorization and must not be claimed from fixtures.
+
+Only then reconsider `project-panes` and `external-machines` in `src/shared/phase-one.ts`. The filename is historical; it still owns current feature gates.
+
+### 5 — optional integrations
+
+Inventory and adapt messaging (including the separately developed Openspace bridge), MCP selections, permission contracts, extension bindings and provider-specific integrations. For each integration, define capability discovery, identity/authority, unavailable-provider errors, resource provenance and lifecycle cleanup before enabling it. Add tests at the consumer boundary; native delegation must keep working without the integration. Never substitute another provider or widen permissions after failure.
+
+### 6 — advanced core
+
+Adapt missions, schedules, watchdog, workflow host steps and advanced acceptance/review gates after their dependencies are proven. Durable restart/recovery, duplicate dispatch prevention, cancellation, budgets and publication-versus-completion semantics need behavioral coverage before exposure. Existing neutral `false` settings remain valid; source presence is not an enabled scheduling or acceptance service.
+
+Automatic memory/refinement policy, council/prompt resources, package subpath APIs and embedded/external-job adapters still require scoped implementation and behavioral coverage. Worktrunk, Gist sharing and Orca remain excluded, not backlog items.
+
+## Implementation map
+
+Paths below are relative to `extensions/subagents/src/`; tests live separately in `tests/`.
+
+| Boundary | Owning code | Relevant tests |
+| --- | --- | --- |
+| Registration, public dispatch and gates | `extension/`, `shared/phase-one.ts`, `shared/disabled-features.ts`, `runs/foreground/subagent-executor.ts` | `sdk.test.mjs`, `installed.test.mjs`, public SDK suites |
+| SDK resources, launch and supervision | `runs/shared/child-{launch,session,runtime-config}.ts`, `intercom/native-supervisor-channel.ts` | `native.test.mjs`, `unit/child-*.test.ts`, supervisor/fork suites |
+| Writer and process lifecycle | `runs/shared/writer-admission.ts`, `runs/background/{async-execution,subagent-runner,process-terminal,owned-process-tree}.ts` | `writer-admission.test.mjs`, native/external SDK and process-tree suites |
+| Git ownership and handoffs | `runs/shared/worktree*.ts`, `parallel-handoff.ts`, `lane-metadata.ts`, `mutation-evidence.ts` | `worktrees.test.mjs`, `worktree-sdk.test.mjs`, `worktree-management.test.mjs`, mutation/handoff units |
+| Workflows and recovery | `workflows/`, foreground detach reconciliation and history, background resume/status | `workflows.test.mjs`, `unit/workflow-*.test.ts`, retained-resume SDK tests |
+| CLI adapters | `runs/shared/*-adapter.ts`, `external-cli-{preflight,runner,contract}.ts` | `external-sdk.test.mjs`, adapter/preflight/runner units |
+| Inspectors and metadata | `inspectors/`, `integrations/herdr-status.ts`, `api/inspectors.ts` | `inspectors-sdk.test.mjs`, inspector/bootstrap/shell/status units |
+| Private placement components | `runs/shared/herdr-{placed-run,placement-journal,connection,wire,pi-protocol,pi-channel,managed-execution}.ts`, `extension/herdr-pi-bridge.ts` | `herdr-managed.test.mjs`, `unit/herdr-{placement-retention,transport}.test.ts` |
+| Deferred advanced features | `missions/`, `watchdog/`, optional API/integration modules | Retained reader/recovery tests do not prove these features are publicly enabled |
+
+Keep the ledger, exit criteria and [validation evidence](VALIDATION.md) aligned with behavior that actually landed. A new component test does not complete an unwired end-to-end phase.
 
 ## Runtime contracts
 

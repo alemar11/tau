@@ -61,6 +61,8 @@ Install individual packages when you do not want the full bundle. To switch from
 
 ## Develop
 
+See [the development map](DEVELOPMENT.md) for implemented work, remaining phases, subsystem/test ownership, review criteria and known maintenance issues. Subagents' current status is in its [roadmap](packages/subagents/ROADMAP.md), not the ignored historical `plans/` drafts.
+
 The project-level `mise.toml` pins Node.js 22.19.0 to check the minimum supported runtime without changing the global Node version. From the repository root:
 
 ```sh

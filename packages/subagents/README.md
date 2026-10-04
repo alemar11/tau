@@ -1,6 +1,6 @@
 # subagents
 
-Tau-native Pi delegation. Target: **Pi 0.99.1**, **Node 22.19+**, no build step. npm package: **`subagents`**. Public tool: **`subagent`**. See the [scope and roadmap](ROADMAP.md).
+Tau-native Pi delegation. Target: **Pi 0.99.1**, **Node 22.19+**, no build step. npm package: **`subagents`**. Public tool: **`subagent`**. See the [scope and roadmap](ROADMAP.md), including the delivery ledger, implementation map and remaining acceptance criteria.
 
 ## Load
 
