@@ -40,6 +40,7 @@ function setup(t, { mode = "tui", entries = [], thinkingLevel } = {}) {
         style: (text, { fg, bg }) => `${color}:${fg}/${bg}:${text}`,
       },
       notify: (message, level) => notifications.push({ message, level }),
+      setStatus: (key, text) => uiCalls.push(["status", key, text]),
       setHiddenThinkingLabel: (label) => uiCalls.push(["thinking", label]),
       setWorkingVisible: (visible) => uiCalls.push(["working", visible]),
       setWidget: (key, factory) => {

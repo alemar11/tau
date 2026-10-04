@@ -61,6 +61,22 @@ A test should identify a behavior or regression, exercise the responsible bounda
 - Share fixtures when they remove duplicated setup without hiding assertions. Avoid expanding unrelated production code solely to make tests convenient.
 - Test counts are a run summary, not a coverage or quality target. Record untested live providers, platforms, UI behavior and failure interleavings explicitly.
 
+## Maintenance review after `bcfb873`
+
+The review inventoried all six workspaces, root tooling/configuration and documentation, and inspected representative implementations and tests. It is not a line-by-line audit of every retained Subagents subsystem. Openspace was inspected read-only because it has concurrent work; no changes there belong to this review. `node_modules/` and the generated lockfile were checked for dependency ownership, not manually cleaned; ignored `plans/` remains historical material.
+
+| Finding | Correction and evidence |
+| --- | --- |
+| Calm's “no extension bar label” test never recorded `setStatus` | The UI fixture now implements the actual Pi method. An isolated mutation adding an optional `setStatus` call passed the old test and fails the corrected assertion. |
+| Web's “live lock” fixture had an invalid token, so it never reached the live-process check | Use a valid UUID/current PID and assert unchanged ownership, records and readable content. Keep malformed/incomplete ownership as separate coverage. Removing the live-owner check in an isolated copy passed the old test and now fails. |
+| Parallel result ordering was tested only with immediately resolved callbacks | Hold item zero while later items finish; assert input-ordered results, full bounded concurrency and immediate startup. A completion-order mutation passed the old test and fails the new one. Add queued-permit recovery after rejection and deterministic settlement barriers. |
+
+The standalone “starts within 20 ms” test was replaced, not simply dropped: the new out-of-order test asserts that all three initial workers start in the same turn, while the fourth waits for capacity. Existing early-rejection settlement coverage remains, without polling sleeps. These three targeted mutations demonstrate sensitivity to those regressions only, not a repository-wide mutation score.
+
+Small verified cleanup: remove unused exports/imports from `packages/subagents/tests/support/helpers.ts` (the only consumer imports the retained event-bus and agent fixtures), the unused local worker-index argument, and Calm's never-configured private `smallBodyFrames` branch. Test support is not shipped or dynamically discovered as an extension. No public API, feature gate or execution engine was removed. Keep small quoting, redaction, policy-default and identity tests where they protect distinct contracts; gated modules are not assumed dead.
+
+Validation on macOS: root `npm run check` on Node 22.19.0 and 26.10.0; root `npm test` on Node 26 reports **927 passed, two skipped, zero failed**. That working-tree run includes 234 concurrent Openspace tests and is not a commit-only release certification. All affected-package suites also pass on Node 22: Calm 30, Subagents 566/two skipped, Web 76. Review and tests do not certify live providers, native Windows/Linux or terminal placement.
+
 ## Open maintenance issues
 
 - **Packaging documentation conflicts:** root `package.json`, `README.md` and on-disk `AGENTS.md` describe an aggregate bundle; the Subagents load guide says the root is tooling-only. Individual-package loading is the common supported path. Reconcile the intended root policy before changing installation instructions or the resource manifest; this documentation update does not choose a new packaging policy.

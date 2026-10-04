@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,12 +91,26 @@ test("failed session publication removes the new file and releases the lock", as
   assert.deepEqual(readdirSync(cache.dir), []);
   await save("retry");
 });
-test("live locks fail closed and explicit dead-owner recovery permits a retry", async (t) => {
-  const { save, cache } = setup(t); await save("init");
-  const path = join(cache.dir, ".lock"); writeFileSync(path, JSON.stringify({ pid: process.pid, token: "owner" }));
+test("live locks fail closed without altering ownership or cached records", async (t) => {
+  const { save, cache, refs } = setup(t), initial = await save("init");
+  const path = join(cache.dir, ".lock"), owner = JSON.stringify({ pid: process.pid, token: randomUUID() });
+  writeFileSync(path, owner);
+  const files = readdirSync(cache.dir).sort();
   await assert.rejects(save("locked"), (e) => e.code === "CACHE_BUSY");
-  assert.equal(JSON.parse(readFileSync(path)).token, "owner");
-  rmSync(path); await save("recovered");
+  assert.equal(readFileSync(path, "utf8"), owner);
+  assert.deepEqual(readdirSync(cache.dir).sort(), files);
+  assert.equal(cache.read(initial.responseId, refs).documents[0].text, "init");
+  rmSync(path); await save("after manual removal");
+});
+test("incomplete and malformed lock ownership requires manual recovery", async (t) => {
+  const { save, cache } = setup(t); await save("init");
+  const path = join(cache.dir, ".lock");
+  for (const owner of ["{", JSON.stringify({ pid: process.pid, token: "owner" })]) {
+    writeFileSync(path, owner);
+    await assert.rejects(save("locked"), (e) => e.code === "CACHE_BUSY");
+    assert.equal(readFileSync(path, "utf8"), owner);
+  }
+  rmSync(path); await save("after manual recovery");
 });
 test("a demonstrably exited owner is reclaimed without stealing a live lock", async (t) => {
   const { dir, cache, save } = setup(t); await save("init");

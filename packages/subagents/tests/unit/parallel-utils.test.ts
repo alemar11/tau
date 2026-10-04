@@ -13,6 +13,12 @@ import {
 	type RunnerStep,
 } from "../../extensions/subagents/src/runs/shared/parallel-utils.ts";
 
+function barrier() {
+	let open!: () => void;
+	const promise = new Promise<void>((resolve) => { open = resolve; });
+	return { promise, open };
+}
+
 describe("isParallelGroup", () => {
 	it("returns true for a parallel step group", () => {
 		const step: ParallelStepGroup = {
@@ -83,25 +89,52 @@ describe("flattenSteps", () => {
 });
 
 describe("mapConcurrent", () => {
-	it("processes all items and preserves order", async () => {
-		const items = [10, 20, 30, 40];
-		const results = await mapConcurrent(items, 2, async (item) => item * 2);
-		assert.deepEqual(results, [20, 40, 60, 80]);
+	it("preserves input order when workers finish out of order and starts without staggering", { timeout: 5000 }, async () => {
+		const items = [10, 20, 30, 40], gates = items.map(() => barrier());
+		const fourthStarted = barrier(), laterItemsFinished = barrier();
+		const started: number[] = [], finished: number[] = [];
+		const run = mapConcurrent(items, 3, async (item, i) => {
+			started.push(i);
+			if (i === 3) fourthStarted.open();
+			await gates[i]!.promise;
+			finished.push(i);
+			if (finished.length === 3) laterItemsFinished.open();
+			return item * 2;
+		});
+		try {
+			assert.deepEqual(started, [0, 1, 2], "all initial workers start in the same turn, but the fourth waits");
+			gates[1]!.open();
+			await fourthStarted.promise;
+			assert.deepEqual(finished, [1], "one free slot starts the fourth item without waiting for item zero");
+			gates[2]!.open(); gates[3]!.open();
+			await laterItemsFinished.promise;
+			assert.deepEqual(finished, [1, 2, 3]);
+			gates[0]!.open();
+			assert.deepEqual(await run, [20, 40, 60, 80]);
+			assert.deepEqual(finished, [1, 2, 3, 0]);
+		} finally {
+			for (const gate of gates) gate.open();
+			await run;
+		}
 	});
 
-	it("respects concurrency limit", async () => {
-		let running = 0;
-		let maxRunning = 0;
-		const items = [1, 2, 3, 4, 5, 6];
-
-		await mapConcurrent(items, 2, async () => {
+	it("fills but never exceeds the requested concurrency", async () => {
+		let running = 0, maxRunning = 0;
+		const gate = barrier();
+		const run = mapConcurrent([1, 2, 3, 4, 5, 6], 2, async (item) => {
 			running++;
 			maxRunning = Math.max(maxRunning, running);
-			await new Promise((r) => setTimeout(r, 10));
+			await gate.promise;
 			running--;
+			return item;
 		});
-
-		assert.ok(maxRunning <= 2, `max concurrent was ${maxRunning}, expected <= 2`);
+		try {
+			assert.equal(running, 2, "both available slots must be used before either finishes");
+			gate.open();
+			assert.deepEqual(await run, [1, 2, 3, 4, 5, 6]);
+			assert.equal(maxRunning, 2);
+			assert.equal(running, 0);
+		} finally { gate.open(); await run; }
 	});
 
 	it("handles empty input", async () => {
@@ -137,42 +170,25 @@ describe("mapConcurrent", () => {
 		assert.equal(maxRunning, 1, "should run sequentially with limit=-1");
 	});
 
-	it("does not stagger by default", async () => {
-		const startTimes: number[] = [];
-		const items = [1, 2, 3];
-
-		await mapConcurrent(items, 3, async (_item, i) => {
-			startTimes[i] = Date.now();
-			await new Promise((r) => setTimeout(r, 10));
-		});
-
-		// All workers should start nearly simultaneously
-		const d1 = startTimes[1]! - startTimes[0]!;
-		const d2 = startTimes[2]! - startTimes[0]!;
-		assert.ok(d1 < 20, `worker 1 should start immediately, got ${d1}ms delay`);
-		assert.ok(d2 < 20, `worker 2 should start immediately, got ${d2}ms delay`);
-	});
-
-	it("notifies scheduling settlement only after workers outliving an early rejection stop", async () => {
-		let release!: () => void;
-		const gate = new Promise<void>((resolve) => { release = resolve; });
+	it("notifies scheduling settlement only after workers outliving an early rejection stop", { timeout: 5000 }, async () => {
+		const gate = barrier(), settled = barrier();
 		const started: number[] = [];
-		let schedulingSettled = false;
+		let settlementCalls = 0;
 		const run = mapConcurrent([0, 1, 2], 2, async (item) => {
 			started.push(item);
 			if (item === 0) throw new Error("early rejection");
-			await gate;
+			await gate.promise;
 			return item;
-		}, undefined, () => { schedulingSettled = true; });
+		}, undefined, () => { settlementCalls++; settled.open(); });
 
-		await assert.rejects(run, /early rejection/);
-		assert.equal(schedulingSettled, false);
-		release();
-		for (let attempt = 0; attempt < 20 && !schedulingSettled; attempt++) {
-			await new Promise((resolve) => setTimeout(resolve, 5));
-		}
-		assert.equal(schedulingSettled, true);
-		assert.deepEqual(started, [0, 1, 2]);
+		try {
+			await assert.rejects(run, /early rejection/);
+			assert.equal(settlementCalls, 0);
+			gate.open();
+			await settled.promise;
+			assert.equal(settlementCalls, 1);
+			assert.deepEqual(started, [0, 1, 2]);
+		} finally { gate.open(); await run.catch(() => {}); }
 	});
 
 	it("respects a shared global semaphore across simultaneous calls", async () => {
@@ -193,7 +209,28 @@ describe("mapConcurrent", () => {
 		]);
 
 		assert.deepEqual(results, [[1, 2, 3], [4, 5, 6]]);
-		assert.ok(maxRunning <= 2, `max concurrent was ${maxRunning}, expected <= 2`);
+		assert.equal(maxRunning, 2, "simultaneous calls share the full capacity, not independent or serial pools");
+	});
+
+	it("returns a global permit after rejection so an already queued call can finish", { timeout: 5000 }, async () => {
+		const globalSemaphore = new Semaphore(1), entered = barrier(), gate = barrier();
+		const first = mapConcurrent([0], 1, async () => {
+			entered.open();
+			await gate.promise;
+			throw new Error("worker failed");
+		}, globalSemaphore);
+		const rejected = assert.rejects(first, /worker failed/);
+		await entered.promise;
+		let successorStarted = false;
+		const successor = mapConcurrent([42], 1, async (item) => { successorStarted = true; return item; }, globalSemaphore);
+		try {
+			await new Promise<void>((resolve) => setImmediate(resolve));
+			assert.equal(successorStarted, false);
+			gate.open();
+			await rejected;
+			assert.deepEqual(await successor, [42]);
+			assert.equal(successorStarted, true);
+		} finally { gate.open(); await Promise.allSettled([rejected, successor]); }
 	});
 
 	it("clamps invalid global semaphore limits to 1", async () => {

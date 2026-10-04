@@ -213,7 +213,7 @@ export async function mapConcurrent<T, R>(
 		}
 	};
 
-	async function worker(_workerIndex: number): Promise<void> {
+	async function worker(): Promise<void> {
 		try {
 			while (next < items.length) {
 				const i = next++;
@@ -238,7 +238,7 @@ export async function mapConcurrent<T, R>(
 
 	if (liveWorkers === 0) notifySchedulingSettled();
 	await Promise.all(
-		Array.from({ length: liveWorkers }, (_, wi) => worker(wi)),
+		Array.from({ length: liveWorkers }, worker),
 	);
 	return results;
 }

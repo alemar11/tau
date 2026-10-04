@@ -9,7 +9,6 @@ type Sprite = {
   bodyFrames?: [string[], string[]];
   feet: [string[], string[]];
   smallBody: string[];
-  smallBodyFrames?: [string[], string[]];
   smallFeet: [string[], string[]];
 };
 
@@ -166,9 +165,8 @@ export function renderMonster(
   const spriteWidth = width >= SPRITE_WIDTH ? SPRITE_WIDTH : width >= 6 ? 6 : 1;
   const sprite = SPRITES[((monsterIndex % MONSTER_COUNT) + MONSTER_COUNT) % MONSTER_COUNT]!;
   const body = sprite.bodyFrames?.[foot] ?? sprite.body;
-  const smallBody = sprite.smallBodyFrames?.[foot] ?? sprite.smallBody;
   const pixels = spriteWidth === SPRITE_WIDTH ? [...body, ...sprite.feet[foot]!] : spriteWidth === 6
-    ? [...smallBody, ...sprite.smallFeet[foot]!] : ["1", "1", foot === 0 ? "1" : "0", foot === 0 ? "0" : "1"];
+    ? [...sprite.smallBody, ...sprite.smallFeet[foot]!] : ["1", "1", foot === 0 ? "1" : "0", foot === 0 ? "0" : "1"];
   const span = width - spriteWidth;
   const phase = span > 0 ? step % (span * 2) : 0;
   const column = phase <= span ? phase : span * 2 - phase;
