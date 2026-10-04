@@ -128,8 +128,11 @@ export default function registerHerdrPiBridge(pi: ExtensionAPI): void {
 	on("session_shutdown", () => { server.close(); client?.destroy(); });
 
 	const server = net.createServer((socket) => {
+		// Malformed peers fail this transport, not the Pi process; runtime evidence stays retained.
+		socket.on("error", () => {});
 		if (client && !client.destroyed) { socket.destroy(); return; }
 		client = socket; const decoder = new HerdrPiFrameDecoder(); let total = 0;
+		socket.on("end", () => { try { decoder.end(); } catch (error) { socket.destroy(error as Error); } });
 		for (const record of journal) socket.write(encodeHerdrPiFrame(record));
 		socket.on("data", (chunk: Buffer) => {
 			total += chunk.byteLength; if (total > HERDR_PI_MAX_FRAME_BYTES * 32) { socket.destroy(new Error("Bridge byte budget exceeded.")); return; }

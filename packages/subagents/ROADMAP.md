@@ -38,7 +38,9 @@ The private placement engine now journals intent before remote runtime allocatio
 
 Cleanup releases local transports only. Remote panes, processes, runtime directories and journals remain retained after success, failure, cancellation and disconnect. Neither Herdr `idle`/`done` nor quiet terminal output proves writer settlement; the private remote CLI projection no longer advertises verified stop. Local native/CLI stop support is unchanged.
 
-This is a tested ownership foundation, **not enabled placement**. Public project panes, saved-machine configuration/wiring, explicit remote resource loading, deadline-bound remote writer admission and authoritative process-settlement evidence remain required. No live SSH placement or terminal mutation was exercised; local allocation locks do not coordinate other hosts or manual Herdr operations.
+The transport foundation now validates bounded JSON/UTF-8 frames independently of socket fragmentation, rejects malformed RPC envelopes, and correlates acknowledgements without replacing pending requests. Pi bridge requests have finite waits, cancellation and the original launch deadline; replay is bounded by both bytes and frame count. Disconnect, release and timeout reject pending/future transport waits with unknown remote state, not successful execution or stopped writers. Malformed peers terminate only their bridge connection, retaining runtime evidence.
+
+This is a tested ownership/transport foundation, **not enabled placement**. Transport deadlines do not yet bound runtime allocation or establish remote writer admission. Public project panes, saved-machine configuration/wiring, explicit remote resource loading, deadline-bound remote writer admission and authoritative process-settlement evidence remain required. No live SSH placement or terminal mutation was exercised; local allocation locks do not coordinate other hosts or manual Herdr operations.
 
 ## Remaining phases
 

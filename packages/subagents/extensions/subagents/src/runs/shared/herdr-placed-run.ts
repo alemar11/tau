@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import * as fs from "node:fs";
-import * as net from "node:net";
 import * as path from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import packageJson from "../../../../../package.json" with { type: "json" };
@@ -8,8 +7,10 @@ import type { HerdrMachineReference, HerdrRemoteGitStatus } from "../../shared/t
 import type { ChildSession, ChildSessionEvent, ChildSessionFactory, ChildSessionLaunch } from "./child-session.ts";
 import type { ChildRuntimeConfig } from "./child-runtime-config.ts";
 import { connectHerdrMachine, remoteShellCommand, runHerdrRemoteCommand, runHerdrRemoteCommandAsync, type HerdrForwardedConnection, type HerdrRpcClient } from "./herdr-connection.ts";
-import { encodeHerdrPiFrame, HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, HerdrPiFrameDecoder, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
+import { HERDR_PI_MODE_ENV, HERDR_PI_PROTOCOL, HERDR_PI_RUN_ENV, HERDR_PI_RUNTIME_DIR_ENV, validateHerdrPiRunId, type HerdrPiFrame } from "./herdr-pi-protocol.ts";
+import { BridgeChannel } from "./herdr-pi-channel.ts";
 import { assertHerdrPrivateDirectory, herdrPrivateDirectory, HerdrPlacementJournal, syncHerdrDirectory } from "./herdr-placement-journal.ts";
+export { BridgeChannel } from "./herdr-pi-channel.ts";
 
 export interface HerdrRunIdentity { runId: string; machineId: string; target: string; session: string | null; workspaceId: string; tabId: string; paneId: string; terminalId: string; agentName: string; nativeSessionId: string; cwd: string; runtimeDir: string }
 export interface HerdrRunSnapshot { connection: "connected" | "unknown" | "closed"; state: "ready" | "working" | "blocked" | "settled" | "unknown"; identity?: HerdrRunIdentity; revision: number }
@@ -28,7 +29,17 @@ export function reconcileHerdrPlacedRun(identity: HerdrRunIdentity, candidate: H
 }
 
 export function reconcileHerdrReconnect(identity: HerdrRunIdentity, candidate: HerdrReconnectCandidate, lastEvidenceCursor: number): { ok: true; state: HerdrRunSnapshot["state"]; paneId: string; cursor: number } | { ok: false; reason: string } {
-	return reconcileHerdrPlacedRun(identity, candidate, () => { const bridge = candidate.bridge; if (bridge.runId !== identity.runId || bridge.nativeSessionId !== identity.nativeSessionId || bridge.packageVersion !== packageJson.version || bridge.protocol !== HERDR_PI_PROTOCOL) return { ok: false, reason: "Bridge run, package, protocol, or native session identity changed." }; if (typeof bridge.evidenceCursor !== "number" || typeof bridge.evidenceFloor !== "number" || bridge.evidenceCursor < lastEvidenceCursor || bridge.evidenceFloor > lastEvidenceCursor + 1) return { ok: false, reason: "Bridge evidence has a gap after reconnect." }; return { ok: true, cursor: bridge.evidenceCursor }; });
+	return reconcileHerdrPlacedRun(identity, candidate, () => {
+		const bridge = candidate.bridge;
+		if (bridge.runId !== identity.runId || bridge.nativeSessionId !== identity.nativeSessionId || bridge.packageVersion !== packageJson.version || bridge.protocol !== HERDR_PI_PROTOCOL) return { ok: false, reason: "Bridge run, package, protocol, or native session identity changed." };
+		const { evidenceCursor: cursor, evidenceFloor: floor } = bridge;
+		if (!Number.isSafeInteger(lastEvidenceCursor) || lastEvidenceCursor < 0 ||
+			typeof cursor !== "number" || !Number.isSafeInteger(cursor) || cursor < lastEvidenceCursor ||
+			typeof floor !== "number" || !Number.isSafeInteger(floor) || floor < 1 || floor > lastEvidenceCursor + 1 || floor > cursor + 1) {
+			return { ok: false, reason: "Bridge evidence has a gap after reconnect." };
+		}
+		return { ok: true, cursor };
+	});
 }
 
 export async function boundedHerdrReconnect(identity: HerdrRunIdentity, lastEvidenceCursor: number, attempt: (number: number) => Promise<HerdrReconnectCandidate>, options: { attempts?: number; deadlineMs?: number; disposed?: () => boolean } = {}) {
@@ -345,32 +356,6 @@ export class HerdrPlacedRunOwner {
 	}
 }
 
-export class BridgeChannel {
-	readonly socket: net.Socket; readonly decoder = new HerdrPiFrameDecoder(); readonly listeners = new Set<(frame: HerdrPiFrame) => void>(); readonly waiters = new Map<string, { resolve(frame: HerdrPiFrame): void; reject(error: Error): void }>(); readonly runId: string; readonly frames: HerdrPiFrame[] = [];
-	readonly failure: Promise<never>; #rejectFailure!: (error: Error) => void; #failed = false;
-	constructor(socketPath: string, runId: string) { this.runId = runId; this.failure = new Promise<never>((_resolve, reject) => { this.#rejectFailure = reject; }); this.failure.catch(() => {}); this.socket = net.createConnection(socketPath); this.socket.on("data", (chunk: Buffer) => { try { for (const frame of this.decoder.push(chunk)) { if (frame.runId !== runId) throw new Error("Bridge run identity mismatch."); this.frames.push(frame); if (this.frames.length > 1024) throw new Error("Bridge replay queue exceeded its bound."); const key = typeof frame.requestId === "string" ? `${frame.type}:${frame.requestId}` : ""; const waiter = this.waiters.get(key); if (waiter) { this.waiters.delete(key); waiter.resolve(frame); } for (const listener of this.listeners) listener(frame); } } catch (error) { this.fail(error as Error); } }); this.socket.on("error", (error) => this.fail(error)); this.socket.on("close", () => { if (!this.#failed) this.fail(new Error("Remote Pi bridge connection was lost; task state is unknown.")); }); }
-	fail(error: Error) { if (this.#failed) return; this.#failed = true; this.#rejectFailure(error); for (const waiter of this.waiters.values()) waiter.reject(error); this.waiters.clear(); }
-	get failed() { return this.#failed; }
-	wait(type: string, requestId: string): Promise<HerdrPiFrame> { return new Promise((resolve, reject) => this.waiters.set(`${type}:${requestId}`, { resolve, reject })); }
-	configure(resources: { agent: string; skills?: string[]; toolCeiling?: string[]; reads?: string[] | false }) { const requestId = `cfg_${randomBytes(6).toString("hex")}`; const waiting = this.wait("configured", requestId); this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "configure", requestId, resources })); return waiting; }
-	supervisorDelivered(requestId: string) { this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "supervisor-delivered", requestId })); }
-	prepare(requestId: string, operation: string, text?: string, supervisorId?: string) { const waiting = this.wait("prepared", requestId); this.socket.write(encodeHerdrPiFrame({ protocol: HERDR_PI_PROTOCOL, runId: this.runId, type: "prepare", requestId, operation, ...(text !== undefined ? { text } : {}), ...(supervisorId ? { supervisorId } : {}) })); return waiting; }
-	close() { this.socket.destroy(); }
-}
-
-function waitForReadyBridgeFrame(bridge: BridgeChannel, timeoutMs: number, timeoutMessage: string, configured = false): Promise<HerdrPiFrame> {
-	return new Promise((resolve, reject) => {
-		const timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-		const listener = (frame: HerdrPiFrame) => {
-			if (frame.type !== "ready" || configured && frame.configured !== true) return;
-			clearTimeout(timer);
-			bridge.listeners.delete(listener);
-			resolve(frame);
-		};
-		bridge.listeners.add(listener);
-	});
-}
-
 export class HerdrPiSession implements ChildSession {
 	readonly #listeners = new Set<(event: ChildSessionEvent) => void>(); #messages: AgentMessage[] = []; #sequence = 0; #disposed = false; #initialGit?: HerdrRemoteGitStatus; #finalGit?: HerdrRemoteGitStatus;
 	readonly #operations = new Map<string, { resolve(): void; reject(error: Error): void; accepted: boolean; settled: boolean }>();
@@ -383,7 +368,7 @@ export class HerdrPiSession implements ChildSession {
 	get evidenceCursor() { return this.#evidenceCursor; }
 	async reconnect() { if (this.#disposed || !this.#reconnectFactory || this.#reconnectFailure) return; this.#snapshot = { ...this.#snapshot, connection: "unknown", state: "unknown", revision: this.#snapshot.revision + 1 }; this.#reconnecting ??= this.#reconnectFactory().catch((error) => { const unknown = this.#reconnectFailure = new Error(`Remote Pi reconciliation failed; task state is unknown: ${error instanceof Error ? error.message : String(error)}`); for (const operation of this.#operations.values()) if (!operation.settled) { operation.settled = true; operation.reject(unknown); } }).finally(() => { this.#reconnecting = undefined; }); await this.#reconnecting; }
 	async replaceTransport(input: { connection: HerdrForwardedConnection; bridgeForward: { close(): Promise<void> }; bridge: BridgeChannel; unsubscribe: () => void; paneId: string; cursor: number; state: HerdrRunSnapshot["state"] }) { if (this.#disposed) { input.unsubscribe(); input.bridge.close(); await input.bridgeForward.close(); await input.connection.close(); return; } const old = { bridgeForward: this.bridgeForward, bridge: this.bridge }; this.bridgeForward = input.bridgeForward; this.bridge = input.bridge; this.identity = { ...this.identity, paneId: input.paneId }; this.#reconnectFailure = undefined; for (const frame of input.bridge.frames) if (typeof frame.cursor === "number" && frame.cursor > this.#evidenceCursor) this.#frame(frame); input.bridge.listeners.add((frame) => this.#frame(frame)); for (const operation of this.#operations.values()) if (!operation.accepted && !operation.settled) { operation.settled = true; operation.reject(new Error("Remote operation was not accepted before transport loss; task state is unknown.")); } this.#evidenceCursor = Math.max(this.#evidenceCursor, input.cursor); this.#snapshot = { connection: "connected", state: input.state, identity: this.identity, revision: this.#snapshot.revision + 1 }; const ownerReplacement = this.owner.replaceConnection({ connection: input.connection, unsubscribe: input.unsubscribe, paneId: input.paneId, state: input.state }); old.bridge.close(); await old.bridgeForward.close(); await ownerReplacement; if (this.#disposed) { await this.owner.cleanup(); return; } this.armReconnect(this.#reconnectFactory!); }
-	observeHerdr(value: unknown) { const data = value && typeof value === "object" ? (value as { data?: Record<string, unknown> }).data : undefined; if (!data || (data.terminal_id !== this.identity.terminalId && data.pane_id !== this.identity.paneId)) return; this.#snapshot = { ...this.#snapshot, revision: this.#snapshot.revision + 1, state: herdrRunState(data.agent_status, this.#snapshot.state) }; }
+	observeHerdr(value: unknown) { const data = value && typeof value === "object" ? (value as { data?: Record<string, unknown> }).data : undefined; if (!data || (data.terminal_id !== this.identity.terminalId || data.pane_id !== this.identity.paneId)) return; this.#snapshot = { ...this.#snapshot, revision: this.#snapshot.revision + 1, state: herdrRunState(data.agent_status, this.#snapshot.state) }; }
 	#frame(frame: HerdrPiFrame) { if (typeof frame.cursor === "number") { if (frame.cursor <= this.#evidenceCursor) return; this.#evidenceCursor = frame.cursor; } if (frame.nativeSessionId !== this.identity.nativeSessionId) { this.bridge.fail(new Error("Remote Pi native session identity changed.")); void this.connection.close(); return; } if (frame.type === "accepted" && typeof frame.requestId === "string") { const operation = this.#operations.get(frame.requestId); if (operation) operation.accepted = true; } if (frame.type === "supervisor-request" && this.supervisorDir && typeof frame.requestId === "string") this.#relaySupervisor(frame); if (frame.type === "event" && frame.event && typeof frame.event === "object") { const event = frame.event as ChildSessionEvent; const message = event.message as AgentMessage | undefined; if (event.type === "message_end" && message) this.#messages.push(message); for (const listener of this.#listeners) listener(event); } if (frame.type === "settled" && typeof frame.requestId === "string") { if (frame.finalAssistant && typeof frame.finalAssistant === "object") { const message = frame.finalAssistant as AgentMessage; if (!this.#messages.includes(message)) this.#messages.push(message); } if (frame.finalGit && typeof frame.finalGit === "object") this.#finalGit = frame.finalGit as HerdrRemoteGitStatus; const operation = this.#operations.get(frame.requestId); if (operation && !operation.settled) { operation.accepted = true; operation.settled = true; frame.idle === true && frame.pending === false ? operation.resolve() : operation.reject(new Error("Remote Pi did not settle with an empty native queue.")); } for (const listener of this.#listeners) listener({ type: "agent_settled" }); } }
 	#relaySupervisor(frame: HerdrPiFrame) { if (!this.supervisorDir || typeof frame.requestId !== "string") return; const reason = frame.reason; if (reason !== "need_decision" && reason !== "interview_request" && reason !== "progress_update") return; const createdAt = Date.now(); const file = path.join(this.supervisorDir, "requests", `${path.basename(frame.requestId)}.json`); const request = { type: "subagent.supervisor.request", id: frame.requestId, createdAt, ...(reason !== "progress_update" ? { expiresAt: createdAt + 10 * 60_000 } : {}), reason, message: typeof frame.message === "string" ? frame.message : "", ...(frame.interview && typeof frame.interview === "object" ? { interview: frame.interview } : {}), expectsReply: reason !== "progress_update", runId: this.runtime.runId ?? this.identity.runId, agent: this.runtime.agent ?? "remote", childIndex: this.runtime.childIndex ?? 0, orchestratorSessionId: this.runtime.orchestratorSessionId }; try { fs.writeFileSync(file, JSON.stringify(request), { mode: 0o600, flag: "wx" }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; const existing = JSON.parse(fs.readFileSync(file, "utf8")) as { id?: unknown; reason?: unknown }; if (existing.id !== frame.requestId || existing.reason !== reason) throw new Error("Supervisor relay identity changed during replay."); } if (reason === "progress_update") this.bridge.supervisorDelivered(frame.requestId); }
 	async #operation(operation: string, text?: string, supervisorId?: string): Promise<void> { const requestId = `${++this.#sequence}_${randomBytes(5).toString("hex")}`; let completion: Promise<void> = Promise.resolve(); if (operation === "prompt") completion = new Promise<void>((resolve, reject) => this.#operations.set(requestId, { resolve, reject, accepted: false, settled: false })); try { await Promise.race([this.bridge.prepare(requestId, operation, text, supervisorId), this.bridge.failure]); await this.connection.client.call("agent.prompt", { target: this.identity.agentName, text: `/tau-subagents-bridge ${requestId}` }); await completion; } catch (error) { if (operation === "prompt" && this.bridge.failed) { await this.reconnect(); await completion; return; } const pending = this.#operations.get(requestId); if (pending) pending.settled = true; throw error; } finally { if (operation === "prompt") this.#operations.delete(requestId); } }
@@ -396,7 +381,7 @@ export class HerdrPiSession implements ChildSession {
 }
 
 export async function reconnectHerdrPiSession(session: HerdrPiSession, launch: ChildSessionLaunch, dependencies: { connect?: typeof connectHerdrMachine; discoverManifest?: typeof discoverBridgeManifest; createBridge?: (socketPath: string, runId: string) => BridgeChannel } = {}): Promise<void> {
-	const connect = dependencies.connect ?? connectHerdrMachine, discoverManifest = dependencies.discoverManifest ?? discoverBridgeManifest, createBridge = dependencies.createBridge ?? ((socketPath: string, runId: string) => new BridgeChannel(socketPath, runId));
+	const connect = dependencies.connect ?? connectHerdrMachine, discoverManifest = dependencies.discoverManifest ?? discoverBridgeManifest, createBridge = dependencies.createBridge ?? ((socketPath: string, runId: string) => new BridgeChannel(socketPath, runId, { deadlineAt: launch.deadlineAt, signal: launch.admissionSignal }));
 	let validated: { connection: HerdrForwardedConnection; unsubscribe: () => void; bridgeForward: { socketPath: string; close(): Promise<void> }; bridge: BridgeChannel; candidate: { adopted: boolean; lost?: Error } } | undefined;
 	const result = await boundedHerdrReconnect(session.identity, session.evidenceCursor, async () => {
 		const connection = await connect(launch.machine!); let unsubscribe = () => {}; let bridgeForward: { socketPath: string; close(): Promise<void> } | undefined; let bridge: BridgeChannel | undefined; const generation: { adopted: boolean; lost?: Error } = { adopted: false };
@@ -404,7 +389,7 @@ export async function reconnectHerdrPiSession(session: HerdrPiSession, launch: C
 			const snapshot = parseHerdrSessionSnapshot(await connection.client.call<Record<string, unknown>>("session.snapshot"));
 			const agents = snapshotAgents(snapshot);
 			const manifest = await discoverManifest(launch.machine!, session.identity.runId, session.identity.runtimeDir); bridgeForward = await connection.forwardRemoteSocket(manifest.socketPath, "bridge-reconnect"); bridge = createBridge(bridgeForward.socketPath, session.identity.runId);
-			const ready = await waitForReadyBridgeFrame(bridge, 8_000, "Reconnected bridge handshake timed out.", true);
+			const ready = await bridge.ready(8_000, "Reconnected bridge handshake timed out.", true);
 			const candidate: HerdrReconnectCandidate = { endpoint: connection.endpoint, agents, bridge: { runId: ready.runId, nativeSessionId: ready.nativeSessionId as string | undefined, packageVersion: ready.packageVersion as string | undefined, protocol: ready.protocol, evidenceCursor: ready.evidenceCursor as number | undefined, evidenceFloor: ready.evidenceFloor as number | undefined } };
 			const check = reconcileHerdrReconnect(session.identity, candidate, session.evidenceCursor); if (!check.ok) throw new Error(check.reason);
 			unsubscribe = await connection.client.subscribe(herdrStatusSubscriptions(check.paneId), (event) => { session.owner.observeEvent(event); session.observeHerdr(event); }, (error) => { if (!generation.adopted) { generation.lost ??= error; return; } session.owner.markConnectionUnknown(connection); void session.reconnect(); });
@@ -425,8 +410,8 @@ export async function createHerdrPiSession(launch: ChildSessionLaunch): Promise<
 		let reconnectSession: HerdrPiSession | undefined; owned = await owner.provision(); await owner.subscribe((event) => observeHerdr?.(event), () => void reconnectSession?.reconnect());
 		agentName = `pi-${runId.slice(-20)}`; const { terminalId } = await owner.start("pi", agentName, policy.args);
 		const manifest = await discoverBridgeManifest(launch.machine, runId, runtimeDir); if (manifest.protocol !== HERDR_PI_PROTOCOL || manifest.packageVersion !== packageJson.version) throw new Error(`Remote tau-subagents bridge version mismatch (remote ${manifest.packageVersion}, local ${packageJson.version}).`);
-		const bridgeForward = await connection.forwardRemoteSocket(manifest.socketPath, "bridge"); const bridge = new BridgeChannel(bridgeForward.socketPath, runId);
-		const ready = await waitForReadyBridgeFrame(bridge, 15_000, "Remote Pi bridge handshake timed out.");
+		const bridgeForward = await connection.forwardRemoteSocket(manifest.socketPath, "bridge"); const bridge = new BridgeChannel(bridgeForward.socketPath, runId, { deadlineAt: launch.deadlineAt, signal: launch.admissionSignal });
+		const ready = await bridge.ready(15_000, "Remote Pi bridge handshake timed out.");
 		if (ready.packageVersion !== packageJson.version || ready.nativeSessionId !== manifest.nativeSessionId || ready.cwd !== launch.machine.cwd) throw new Error("Remote Pi bridge handshake identity mismatch.");
 		const configured = await Promise.race([bridge.configure(policy.resources), bridge.failure]);
 		if (configured.nativeSessionId !== manifest.nativeSessionId || configured.agent !== policy.resources.agent) throw new Error("Remote Pi resource resolution identity mismatch.");
